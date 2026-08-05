@@ -1,0 +1,12 @@
+# Video files are deliberately NOT committed. The simulated camera source is
+# an existing DeepStream sample read from its install path at run time.
+# See media/README.md for the rationale.
+media/*.mp4
+media/*.mov
+media/*.h264
+media/*.mkv
+media/*.avi
+
+# Local scratch output
+*.log
+*.dot
