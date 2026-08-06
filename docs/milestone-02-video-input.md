@@ -477,26 +477,31 @@ $ echo $?
 
 ### Visible playback
 
-`nv3dsink` rendering was confirmed directly on this machine before the scripts
-were written — the explicit pipeline against `DISPLAY=:1` produced a window on
-`DP-1` and reported:
+Run end-to-end through the script, with `nv3dsink` rendering to the attached
+`DP-1` monitor via the auto-detected display:
 
 ```
-Execution ended after 0:00:05.973216792     # clip duration 5.97 s
-exit=0
+$ ./scripts/run_simulated_stream.sh
+== Simulated camera stream ==
+  source               .../samples/streams/sample_walk.mov
+  duration             9.610 s per pass
+  display              :1
+  sink                 nv3dsink (sync=true -> real-time pacing)
+  mode                 single pass
+...
+New clock: GstSystemClock
+Got EOS from element "pipeline0".
+Execution ended after 0:00:09.609986358
+Playback finished (clean EOS).
+EXIT=0
 ```
 
-**Not yet run end-to-end through `run_simulated_stream.sh` with a display
-sink**, because doing so opens a window on the attached monitor and the run was
-declined. The pipeline it builds is identical to the one verified above plus
-the auto-detected `DISPLAY`, and the script's own logic — argument handling,
-looping, per-pass sequencing, signal handling — *has* been exercised end to end
-via `--sink fakesink`. To close the remaining gap:
+`0:00:09.609986358` against a clip duration of 9.6096 s — the display path is
+paced in real time exactly as the headless path is, and exits on a clean EOS.
 
-```bash
-./scripts/run_simulated_stream.sh            # one 9.61 s pass
-./scripts/run_simulated_stream.sh --loop     # until Ctrl-C
-```
+The script's other behaviour (argument handling, looping, per-pass sequencing,
+signal handling) is exercised separately via `--sink fakesink`, so it can be
+regression-tested without opening a window.
 
 ### No inference component
 
@@ -549,7 +554,7 @@ preprocessing element. (The names appear in this document only, as prose.)
 |---|---|
 | Suitable recorded surveillance-style source selected | Done — `sample_walk.mov` (default), `sample_1080p_h264.mp4` via `--crowded`; people confirmed by decoding frames |
 | Codec, resolution, frame rate, duration documented | Done — H.264 Main, 1920x1080, 30000/1001, 9.61 s (and High, 30/1, 48.10 s) |
-| Explicit pipeline replays it visibly when a display exists | Pipeline verified with `nv3dsink` on `DISPLAY=:1`; script logic verified via `--sink fakesink`; not yet run with a display sink (see §7) |
+| Explicit pipeline replays it visibly when a display exists | Done — `run_simulated_stream.sh` with `nv3dsink` on `DISPLAY=:1`, window on `DP-1`, 9.609986358 s for a 9.6096 s clip, exit 0 |
 | Headless pipeline decodes a bounded number of frames and exits | Done — `rendered: 150, dropped: 0`, exit 0 |
 | Stream is paced in real time | Done — 9.80 s vs 9.610 s actual; 1.53 s unpaced |
 | Continuous looping for visible playback | Done — `--loop` / `--passes N`, 3 passes at 9.610 s each, stops correctly on SIGINT |

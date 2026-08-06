@@ -208,6 +208,5 @@ Off the critical path; recorded so they do not become scope.
 
 | Item | Impact | Trigger to repay |
 |---|---|---|
-| Visible playback never run end-to-end through `run_simulated_stream.sh` with a display sink | Low — the pipeline and script logic are both verified separately | Next time a display run is acceptable |
 | Git identity not configured globally | Low — commits pass it inline via `git -c` | Before any multi-author work |
 | Pipeline is H.264-in-MP4/MOV specific | None today; blocks other sources | If a non-H.264 source is introduced |
