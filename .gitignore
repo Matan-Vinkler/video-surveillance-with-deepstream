@@ -10,3 +10,12 @@ media/*.avi
 # Local scratch output
 *.log
 *.dot
+
+# Per-machine Claude Code settings. Currently ignored only via the user's
+# global gitignore, so a clone on another machine would otherwise track it.
+.claude/settings.local.json
+
+# Editor and OS cruft
+*~
+*.swp
+.DS_Store
