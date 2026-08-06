@@ -24,17 +24,31 @@ Each document has exactly one responsibility. Do not duplicate between them:
 
 If information belongs in two places, put it in one and link to it.
 
-## 2. Project context
+## 2. Engineering philosophy
+
+This repository is both an engineering project and a learning project.
+
+- **Prefer implementations that expose important concepts** rather than hiding
+  them behind convenience wrappers — but only where there is no significant
+  trade-off in correctness or maintainability. Pedagogy does not justify worse
+  engineering.
+- The goal is a working surveillance system **and** an understanding of every
+  major component in the stack: GStreamer, DeepStream, TensorRT, Triton, and
+  Jetson deployment.
+- **AI tools accelerate implementation; they do not replace engineering
+  judgement.** Every significant implementation must be understood,
+  independently verified, and documented.
+
+Explanation is part of the deliverable, not an optional extra.
+
+## 3. Project context
 
 A staged capstone project on an NVIDIA Jetson. Work proceeds one milestone at a
 time, and each milestone is deliberately narrow. **`PLAN.md` is the source of
 truth for what is done, what is active, and what is out of scope.** Read it
 before proposing work.
 
-The user is building this to understand the system, not only to get working
-code. Explanation is part of the deliverable, not an optional extra.
-
-## 3. Workflow
+## 4. Workflow
 
 Follow this loop:
 
@@ -50,7 +64,7 @@ The full loop is for substantive work. A typo fix, a one-line doc correction, or
 a read-only question does not need a formal proposal — use judgement, and when
 in doubt, propose. Never skip steps 6 and 7.
 
-## 4. What requires approval
+## 5. What requires approval
 
 **Ask first:**
 
@@ -69,13 +83,13 @@ in doubt, propose. Never skip steps 6 and 7.
 - Running the repository's own bounded verification scripts
 - Writing scratch files to the session scratchpad (never into the project)
 
-## 5. Engineering principles
+## 6. Engineering principles
 
 - **Incremental development.** One milestone at a time; small, reviewable changes.
 - **Evidence before conclusions.** Measure it; do not reason from what "should" happen.
 - **Explicit over automatic.** Where a construct exists to be understood, spell it
   out — an explicit GStreamer pipeline over `playbin`, named elements over
-  auto-plugging.
+  auto-plugging. Subject to the trade-off test in §2.
 - **Minimal implementations.** Solve the stated problem. Do not add configuration,
   layers, or generality that was not requested.
 - **No silent assumptions.** State assumptions explicitly, or verify them.
@@ -86,7 +100,7 @@ in doubt, propose. Never skip steps 6 and 7.
   you must trace. Factor out only what is genuinely shared.
 - **Never modify system software without explicit approval.**
 
-## 6. Verification standard
+## 7. Verification standard
 
 A change is verified when:
 
@@ -101,7 +115,7 @@ Never use `|| true`, or any construct that hides a non-zero exit. If something
 could not be verified, say so explicitly and say why — an honest gap is worth
 more than an unearned claim.
 
-## 7. Documentation rules
+## 8. Documentation rules
 
 - Update documentation **in the same change** as the behaviour it describes.
 - Documentation quotes **real captured output**. If behaviour changes, re-run and
@@ -119,7 +133,7 @@ more than an unearned claim.
 - When a limitation is discovered, document it as a limitation. Do not quietly
   work around it.
 
-## 8. Completed milestones are frozen
+## 9. Completed milestones are frozen
 
 Treat completed milestones as finished work:
 
@@ -131,7 +145,7 @@ Treat completed milestones as finished work:
 Their inspection reports are dated records of what was true at the time. Do not
 rewrite history in them; append corrections instead.
 
-## 9. Avoid
+## 10. Avoid
 
 - Scope creep into future milestones — especially adding AI inference, tracking, or
   deployment machinery before its milestone is open
@@ -141,7 +155,7 @@ rewrite history in them; append corrections instead.
 - Committing large binaries; prefer referencing files already on the target machine
 - Hard-coding versions or paths that can be discovered at run time
 
-## 10. Standing environment facts
+## 11. Standing environment facts
 
 - Development happens directly on the Jetson. No `sudo` is available or permitted.
 - Shells here run on a tty with no `DISPLAY`. Visible playback opens a window on the
