@@ -41,29 +41,59 @@ them** — not by trusting the filenames.
 
 | File | Codec | Resolution | FPS | Duration | Audio | People (verified visually) |
 |---|---|---|---|---|---|---|
-| **`sample_1080p_h264.mp4`** | H.264 High | 1920x1080 | 30/1 | **48.10 s** | AAC | **Many** — pedestrians, a cyclist, seated people, traffic |
-| `sample_720p.mp4` | H.264 High | 1280x720 | 30/1 | 48.07 s | AAC | Same scene, lower resolution |
+| **`sample_walk.mov`** (default) | H.264 Main | 1920x1080 | 30000/1001 | **9.61 s** | AAC | **One person walking across frame** |
+| **`sample_1080p_h264.mp4`** (`--crowded`) | H.264 High | 1920x1080 | 30/1 | **48.10 s** | AAC | **Many** — pedestrians, a cyclist, seated people, traffic |
+| `sample_720p.mp4` | H.264 High | 1280x720 | 30/1 | 48.07 s | AAC | Same scene as the crowded source, lower resolution |
 | `sample_qHD.mp4` | H.264 High | 960x540 | 25/1 | 72.08 s | none | Dashcam; mostly cars, few distant people |
-| `sample_walk.mov` | H.264 Main | 1920x1080 | 30000/1001 | 9.61 s | AAC | One person walking |
 | `sample_run.mov` | H.264 Main | 1920x1080 | 30000/1001 | 5.97 s | AAC | One person running in an atrium |
 | `sample_office.mp4` | H.264 Main | 1728x1080 | 30/1 | 5.43 s | AAC | Fisheye office cam; people are tiny |
 | `sample_cam6.mp4` | H.264 High | 1472x1384 | **2/1** | 60.00 s | none | Parking garage; no people seen; 2 fps |
 | `fisheye_dist.mp4` | H.264 | — | — | — | — | Heavily distorted fisheye |
 
-### Chosen: `sample_1080p_h264.mp4`
+### Chosen: `sample_walk.mov` (default), `sample_1080p_h264.mp4` (`--crowded`)
 
-- Contains **multiple people continuously**, matching the eventual
-  "person in a restricted area" use case.
-- **48 s at a true 30 fps** — long enough to observe sustained pacing, short
-  enough to re-run constantly.
-- **H.264 High in MP4 alongside an AAC track**, which forces a real demux step
-  and a real `avc` -> `byte-stream` conversion. A raw `.h264` elementary
-  stream would have skipped both, and they are the most instructive parts.
+**`sample_walk.mov` is the default simulated camera source.**
+
+- A **single person walking across frame** — the cleanest analogue of someone
+  entering a restricted area, and the easiest scene to reason about when
+  detection is added in a later milestone.
+- **9.61 s** — short enough that looping is the natural way to watch it, and
+  short enough for a verification run to complete in seconds.
+- **H.264 Main in a QuickTime `.mov` container with an AAC track**, so it still
+  exercises a real demux step, a deliberate video-pad selection, and the
+  `avc` -> `byte-stream` conversion.
 - Decoded in hardware by `nvv4l2decoder`.
-- Already present locally, so nothing is downloaded.
 
-`sample_run.mov` (5.97 s) is kept as a secondary **quick clip** so the pacing
-check can run in ~6 s instead of ~48 s.
+**`sample_1080p_h264.mp4` is retained as the optional crowded-scene source**,
+selected with `--crowded`. It contains many pedestrians, a cyclist and traffic
+over 48.10 s, which is the useful stress case for a busier scene.
+
+### Do the two sources need different pipelines? No.
+
+| Aspect | `sample_walk.mov` (default) | `sample_1080p_h264.mp4` (`--crowded`) | Pipeline impact |
+|---|---|---|---|
+| Container | QuickTime `.mov` | MP4 | **None** — both ISO-BMFF/QuickTime family, both `qtdemux` |
+| Codec | H.264 **Main**, level 4 | H.264 **High**, level 4 | **None** — `h264parse` and `nvv4l2decoder` handle both |
+| In-container format | `stream-format=avc` | `stream-format=avc` | **None** — same `avc` -> `byte-stream` conversion |
+| Resolution | 1920x1080 | 1920x1080 | None |
+| Frame rate | 30000/1001 (29.97) | 30/1 | None structurally; changes expected durations only |
+| Video bitrate | 42.7 Mbps | 5.7 Mbps | None — decode stays far faster than real time |
+| Audio | AAC 48 kHz stereo | AAC 48 kHz stereo | None — audio pad left unlinked |
+| Decoder output | `NV12` / `NVMM` | `NV12` / `NVMM` | Identical |
+
+This was verified rather than assumed: the *unmodified* inspection script was
+run against the new source and negotiated the same chain, differing only in
+`profile` and framerate.
+
+```
+$ ./scripts/inspect_video.sh --caps sample_walk.mov          # rc=0
+H264Parse.sink:      video/x-h264, stream-format=avc,         alignment=au, level=4, profile=main
+H264Parse.src:       video/x-h264, stream-format=byte-stream, alignment=au, level=4, profile=main, parsed=true
+nvv4l2decoder.src:   video/x-raw(memory:NVMM), format=NV12, 1920x1080, ...
+```
+
+So changing the default source is a **source-selection change, not a pipeline
+change.**
 
 Licence and origin are documented in [`../media/README.md`](../media/README.md).
 Summary: NVIDIA DeepStream 9.1.0 sample, no per-stream licence file exists on
@@ -204,9 +234,9 @@ Measured on this machine, playing each clip to its natural end of stream:
 
 | Clip | Real duration | `sync=true` | `sync=false` |
 |---|---|---|---|
-| `sample_run.mov` | 5.97 s | **6.14 s** | 1.23 s |
-| `sample_walk.mov` | 9.61 s | **9.78 s** | 1.55 s |
-| `sample_1080p_h264.mp4` | 48.10 s | **48.27 s** | 6.01 s |
+| `sample_walk.mov` (default) | 9.61 s | **9.80 s** | 1.53 s |
+| `sample_1080p_h264.mp4` (`--crowded`) | 48.10 s | **48.28 s** | 6.02 s |
+| `sample_run.mov` (earlier measurement) | 5.97 s | **6.14 s** | 1.23 s |
 
 Paced playback tracks the real duration; unpaced playback consumes the same
 file several times faster. That contrast is what the verification script
@@ -255,6 +285,61 @@ The consequence for this milestone is a deliberate design choice:
 Trying to make one command prove both would have meant reporting a 48 s
 runtime as though it were a 5 s one.
 
+### Continuous looping
+
+The default clip is 9.61 s, so looping is the normal way to watch it.
+`run_simulated_stream.sh --loop` replays until Ctrl-C; `--passes N` runs a
+fixed number of times.
+
+Looping **re-runs the pipeline per pass** rather than seeking inside it, which
+keeps the pipeline the minimal explainable one. Measured cost, three
+sequential passes of the 9.6096 s clip:
+
+```
+pass 1: exit=0 elapsed=9.779s  overhead=+0.170s
+pass 2: exit=0 elapsed=9.779s  overhead=+0.170s
+pass 3: exit=0 elapsed=9.784s  overhead=+0.175s
+```
+
+A consistent **+0.17 s** per pass (~1.8%) for NVDEC teardown and
+re-initialisation, seen as a brief black frame between passes.
+
+Two alternatives were considered and rejected:
+
+- **`multifilesrc loop=true`** re-reads the file's bytes from the start, which
+  feeds a second container header into `qtdemux` mid-stream and restarts
+  timestamps. Not valid for containerised input.
+- **Segment seek on EOS** (`GST_SEEK_FLAG_SEGMENT` plus a bus watch) is the
+  genuinely gapless approach, but it requires a Python or C application with a
+  bus handler. That would replace an explainable `gst-launch` pipeline with a
+  program, working against the point of this milestone. It is the upgrade path
+  if the 0.17 s gap ever matters.
+
+**Headless verification is deliberately unaffected** — it stays bounded and
+never loops.
+
+#### A signal-handling bug this exposed
+
+The first implementation of `--loop` **could not be stopped with Ctrl-C**.
+`gst-launch -e` traps SIGINT itself, converts it to EOS and exits **0**, so the
+shell's `while true` immediately began another pass:
+
+```
+sending SIGINT to process group 199732
+RESULT: loop STILL RUNNING after SIGINT -> Ctrl-C does not stop it
+passes recorded: PASS 1 … PASS 6        # kept going; needed SIGKILL
+```
+
+Fixed with `trap 'STOP=1' INT TERM` and a loop that checks the flag. Regression
+test:
+
+```
+$ ./scripts/run_simulated_stream.sh --loop --sink fakesink   # SIGINT during pass 2
+-- pass 1 --
+-- pass 2 --
+Stopped after 2 pass(es).                # process exited; no strays left behind
+```
+
 ---
 
 ## 6. Repository layout
@@ -299,6 +384,9 @@ All output below was produced by the scripts in this repository.
   streams dir            /opt/nvidia/deepstream/deepstream-9.1/samples/streams
 == Required elements ==
   filesrc  qtdemux  queue  h264parse  nvv4l2decoder  fakesink        all OK
+== Video sources ==
+  default                .../samples/streams/sample_walk.mov
+  crowded                .../samples/streams/sample_1080p_h264.mp4
 == Display ==
   usable DISPLAY         :1 (visible playback available)
 Selftest passed.
@@ -307,45 +395,82 @@ Selftest passed.
 ### Source properties — `./scripts/inspect_video.sh`
 
 ```
-Duration: 0:00:48.100000000
+file                 .../samples/streams/sample_walk.mov
+Duration: 0:00:09.609600000
 container #0: Quicktime
-  video #1: H.264 (High Profile)   1920x1080   30/1   bitrate 5675753
+  video #1: H.264 (Main Profile)   1920x1080   30000/1001
   audio #2: MPEG-4 AAC             48000 Hz    stereo
 ```
 
-### Headless verification — `./scripts/verify_simulated_stream.sh --full`
+### Headless verification — `./scripts/verify_simulated_stream.sh`
 
 ```
 == CHECK 1: bounded frame flow (150 frames, no window) ==
+  source             .../samples/streams/sample_walk.mov
+  frames requested   150 (clip holds 288)
   exit status        0
   sink counters      rendered: 150, dropped: 0
   PASS  pipeline exited cleanly on its own
   PASS  sink rendered exactly 150 frames
   PASS  no frames dropped
 == CHECK 2: real-time pacing ==
-  clip duration      48.100 s
-  sync=true          48.27 s (exit 0)
-  sync=false         6.01 s (exit 0)
+  clip duration      9.610 s
+  sync=true          9.80 s (exit 0)
+  sync=false         1.53 s (exit 0)
   PASS  both playback runs exited cleanly
-  PASS  paced run (48.27 s) matches clip duration (48.100 s)
-  PASS  unpaced run (6.01 s) is much faster than real time
+  PASS  paced run (9.80 s) matches clip duration (9.610 s)
+  PASS  unpaced run (1.53 s) is much faster than real time
 == Summary ==
 All checks passed.
 ```
 
-Exit status `0`. The quick variant (no `--full`, using the 5.97 s clip) also
-passes, with `sync=true` at 6.14 s against `sync=false` at 1.23 s.
+Exit status `0`. The `--crowded` variant also passes, pacing the 48.10 s source
+at 48.28 s against 6.02 s unpaced.
+
+### Bounded looping — `./scripts/run_simulated_stream.sh --sink fakesink --passes 3`
+
+```
+mode                 3 pass(es)
+display              not required (headless sink 'fakesink')
+-- pass 1 --   Execution ended after 0:00:09.610028503
+-- pass 2 --   Execution ended after 0:00:09.610070565
+-- pass 3 --   Execution ended after 0:00:09.609939343
+Completed 3 pass(es).
+EXIT=0  total=29.89s
+```
 
 ### Error path — no display available
 
 ```
-$ X11_SOCKET_DIR=/nonexistent DISPLAY= ./scripts/run_simulated_stream.sh --quick
+$ X11_SOCKET_DIR=/nonexistent DISPLAY= ./scripts/run_simulated_stream.sh
 ERROR: No usable X display found, so visible playback is not possible.
        This shell has DISPLAY='unset'.
        If a desktop session is running on the console, point at it explicitly:
            DISPLAY=:1 ./scripts/run_simulated_stream.sh
-       For a headless check that needs no window, use instead:
+       To exercise the same pipeline without a window:
+           ./scripts/run_simulated_stream.sh --sink fakesink
+       For the full headless check, use instead:
            ./scripts/verify_simulated_stream.sh
+$ echo $?
+1
+```
+
+A frame request the clip cannot satisfy is rejected before any work is done:
+
+```
+$ ./scripts/verify_simulated_stream.sh --frames 300
+ERROR: Requested 300 frames but '.../sample_walk.mov' contains only 288.
+       The clip would reach end of stream first and the check could never pass.
+       Use --frames 288 or fewer, or --crowded for a longer source.
+$ echo $?
+1
+```
+
+Conflicting options are rejected too:
+
+```
+$ ./scripts/run_simulated_stream.sh --loop --passes 3
+ERROR: --loop (run until Ctrl-C) and --passes N (run N times) are mutually exclusive.
 $ echo $?
 1
 ```
@@ -361,13 +486,16 @@ Execution ended after 0:00:05.973216792     # clip duration 5.97 s
 exit=0
 ```
 
-**Not yet run end-to-end through `run_simulated_stream.sh`**, because doing so
-opens a window on the attached monitor and the run was declined at the time.
-The pipeline it builds is identical to the one verified above plus the
-auto-detected `DISPLAY`. To close this gap:
+**Not yet run end-to-end through `run_simulated_stream.sh` with a display
+sink**, because doing so opens a window on the attached monitor and the run was
+declined. The pipeline it builds is identical to the one verified above plus
+the auto-detected `DISPLAY`, and the script's own logic — argument handling,
+looping, per-pass sequencing, signal handling — *has* been exercised end to end
+via `--sink fakesink`. To close the remaining gap:
 
 ```bash
-./scripts/run_simulated_stream.sh --quick
+./scripts/run_simulated_stream.sh            # one 9.61 s pass
+./scripts/run_simulated_stream.sh --loop     # until Ctrl-C
 ```
 
 ### No inference component
@@ -404,6 +532,14 @@ preprocessing element. (The names appear in this document only, as prose.)
 6. **Faces in `sample_1080p_h264.mp4` are already blurred** by NVIDIA. Good for
    a privacy-sensitive project, but the clip is unsuitable for any future
    face-related work. Person detection is unaffected.
+7. **`--frames N` is bounded by the clip's length.** The default source holds
+   exactly **288 frames** (9.6096 s x 29.97 fps), so a larger request can never
+   be satisfied — the clip reaches end of stream first. This surfaced as a real
+   test failure when the default source changed (`--frames 300` rendered 288).
+   `verify_simulated_stream.sh` now computes the clip's frame count up front and
+   refuses out-of-range requests with the maximum and a suggested alternative,
+   instead of running and then reporting a confusing shortfall. The crowded
+   source holds 1443 frames.
 
 ---
 
@@ -411,11 +547,13 @@ preprocessing element. (The names appear in this document only, as prose.)
 
 | Criterion | Status |
 |---|---|
-| Suitable recorded surveillance-style source selected | Done — `sample_1080p_h264.mp4`, people confirmed by decoding frames |
-| Codec, resolution, frame rate, duration documented | Done — H.264 High, 1920x1080, 30/1, 48.10 s |
-| Explicit pipeline replays it visibly when a display exists | Pipeline verified with `nv3dsink` on `DISPLAY=:1`; not yet run through the script (see §7) |
+| Suitable recorded surveillance-style source selected | Done — `sample_walk.mov` (default), `sample_1080p_h264.mp4` via `--crowded`; people confirmed by decoding frames |
+| Codec, resolution, frame rate, duration documented | Done — H.264 Main, 1920x1080, 30000/1001, 9.61 s (and High, 30/1, 48.10 s) |
+| Explicit pipeline replays it visibly when a display exists | Pipeline verified with `nv3dsink` on `DISPLAY=:1`; script logic verified via `--sink fakesink`; not yet run with a display sink (see §7) |
 | Headless pipeline decodes a bounded number of frames and exits | Done — `rendered: 150, dropped: 0`, exit 0 |
-| Stream is paced in real time | Done — 48.27 s vs 48.10 s actual; 6.01 s unpaced |
+| Stream is paced in real time | Done — 9.80 s vs 9.610 s actual; 1.53 s unpaced |
+| Continuous looping for visible playback | Done — `--loop` / `--passes N`, 3 passes at 9.610 s each, stops correctly on SIGINT |
+| Headless verification stays bounded and non-looping | Done — by construction; `--loop`/`--passes` exist only in the playback script |
 | Scripts reproducible from the repository | Done — all four scripts run from a clean shell |
 | Every pipeline element documented | Done — §4 |
-| No AI inference component added | Done |
+| No AI inference component added | Done — `grep` over `scripts/` returns no matches |

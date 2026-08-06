@@ -49,10 +49,15 @@ ds_streams_dir() {
 }
 
 # ---------------------------------------------------------- video sources --
-# Primary source: 48 s, 1080p30, H.264 High, contains many pedestrians.
-# Quick source:   ~6 s, 1080p30, H.264 Main, one person running (fast checks).
-DEFAULT_VIDEO_NAME="${DEFAULT_VIDEO_NAME:-sample_1080p_h264.mp4}"
-QUICK_VIDEO_NAME="${QUICK_VIDEO_NAME:-sample_run.mov}"
+# Default source: 9.61 s, 1080p 29.97, H.264 Main in QuickTime, one person
+#                 walking across frame. Short, so it loops naturally.
+# Crowded source: 48.10 s, 1080p30, H.264 High in MP4, many pedestrians,
+#                 a cyclist and traffic. Optional busier test case.
+#
+# Both are H.264 in an ISO-BMFF/QuickTime container, so the same explicit
+# pipeline (qtdemux ! h264parse ! nvv4l2decoder) serves both unchanged.
+DEFAULT_VIDEO_NAME="${DEFAULT_VIDEO_NAME:-sample_walk.mov}"
+CROWDED_VIDEO_NAME="${CROWDED_VIDEO_NAME:-sample_1080p_h264.mp4}"
 
 resolve_video() {
     # resolve_video [name-or-path] -> absolute path, or a clear error
@@ -100,6 +105,23 @@ video_duration_seconds() {
     awk -F: '{ printf "%.3f\n", ($1 * 3600) + ($2 * 60) + $3 }' <<<"$stamp"
 }
 
+video_framerate_fps() {
+    # Frame rate as a decimal, from the "Frame rate: 30000/1001" line.
+    local file="$1" fraction
+    fraction="$(gst-discoverer-1.0 "$file" 2>/dev/null | awk '/^ *Frame rate:/ { print $3; exit }')"
+    [[ -n "$fraction" ]] || die "Could not determine the frame rate of '$file' with gst-discoverer-1.0."
+    awk -F/ '{ printf "%.6f\n", $1 / $2 }' <<<"$fraction"
+}
+
+video_frame_count() {
+    # How many frames the clip actually contains. A short clip cannot satisfy
+    # a request for more frames than it holds, so callers check this first.
+    local duration fps
+    duration="$(video_duration_seconds "$1")"
+    fps="$(video_framerate_fps "$1")"
+    awk -v d="$duration" -v f="$fps" 'BEGIN { printf "%d\n", int(d * f + 0.5) }'
+}
+
 # ---------------------------------------------------------------- display --
 # Overridable so the "no display available" path can be exercised on a machine
 # that does in fact have one: X11_SOCKET_DIR=/nonexistent DISPLAY= ...
@@ -114,6 +136,15 @@ display_works() {
         # No xrandr available: the socket's existence is all we can check.
         return 0
     fi
+}
+
+sink_needs_display() {
+    # True (0) for sinks that open a window, false (1) for sinks that do not.
+    # Lets a caller ask explicitly for a headless sink without a display.
+    case "$1" in
+        fakesink|filesink) return 1 ;;
+        *)                 return 0 ;;
+    esac
 }
 
 find_display() {
@@ -158,8 +189,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     done
 
     bold "== Video sources =="
-    printf '  %-22s %s\n' "primary" "$(resolve_video "$DEFAULT_VIDEO_NAME")"
-    printf '  %-22s %s\n' "quick"   "$(resolve_video "$QUICK_VIDEO_NAME")"
+    printf '  %-22s %s\n' "default" "$(resolve_video "$DEFAULT_VIDEO_NAME")"
+    printf '  %-22s %s\n' "crowded" "$(resolve_video "$CROWDED_VIDEO_NAME")"
 
     bold "== Display =="
     if detected="$(find_display)"; then

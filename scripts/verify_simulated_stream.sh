@@ -13,23 +13,25 @@
 #            clock against the clip's real duration. Paced playback must take
 #            about as long as the clip; unpaced must be far quicker.
 #
+# This check is always bounded and never loops, whatever the playback script
+# is doing: each run decodes a fixed number of frames, or plays one clip once.
+#
 # Usage:
-#   ./scripts/verify_simulated_stream.sh              # quick (~6 s clip)
-#   ./scripts/verify_simulated_stream.sh --full       # pace the 48 s source
+#   ./scripts/verify_simulated_stream.sh              # default 9.61 s source
+#   ./scripts/verify_simulated_stream.sh --crowded    # busier 48 s source
 #   ./scripts/verify_simulated_stream.sh --frames 300
 
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 FRAMES=150
-PACING_VIDEO_NAME="$QUICK_VIDEO_NAME"
 VIDEO_ARG=""
 
 while (( $# > 0 )); do
     case "$1" in
-        --full)   PACING_VIDEO_NAME="$DEFAULT_VIDEO_NAME" ;;
-        --frames) shift; (( $# > 0 )) || die "--frames needs a value."; FRAMES="$1" ;;
-        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+        --crowded) VIDEO_ARG="$CROWDED_VIDEO_NAME" ;;
+        --frames)  shift; (( $# > 0 )) || die "--frames needs a value."; FRAMES="$1" ;;
+        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         -*) die "Unknown option '$1'. Try --help." ;;
         *)  VIDEO_ARG="$1" ;;
     esac
@@ -42,7 +44,7 @@ require_tools
 require_elements "${REQUIRED_ELEMENTS[@]}"
 
 FRAME_VIDEO="$(resolve_video "${VIDEO_ARG:-$DEFAULT_VIDEO_NAME}")"
-PACE_VIDEO="$(resolve_video "${VIDEO_ARG:-$PACING_VIDEO_NAME}")"
+PACE_VIDEO="$FRAME_VIDEO"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -69,8 +71,16 @@ printf '  %-18s %s\n' "GStreamer" "$(gst-launch-1.0 --version | awk 'NR==2 { pri
 printf '  %-18s %s\n' "display" "$(find_display 2>/dev/null || echo 'none (headless)')"
 
 # --------------------------------------------------------------- CHECK 1 ---
+AVAILABLE_FRAMES="$(video_frame_count "$FRAME_VIDEO")"
+if (( FRAMES > AVAILABLE_FRAMES )); then
+    die "Requested $FRAMES frames but '$FRAME_VIDEO' contains only $AVAILABLE_FRAMES.
+       The clip would reach end of stream first and the check could never pass.
+       Use --frames $AVAILABLE_FRAMES or fewer, or --crowded for a longer source."
+fi
+
 bold "== CHECK 1: bounded frame flow ($FRAMES frames, no window) =="
 printf '  %-18s %s\n' "source" "$FRAME_VIDEO"
+printf '  %-18s %s (clip holds %s)\n' "frames requested" "$FRAMES" "$AVAILABLE_FRAMES"
 
 set +e
 # basesink debug is what reports the authoritative rendered/dropped counters.
