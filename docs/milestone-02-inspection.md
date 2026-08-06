@@ -418,7 +418,7 @@ headless".
 ## Addendum: corrections from the implementation phase
 
 Two expectations recorded above did not survive measurement. Both are covered
-in detail in [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
+in detail in [`milestone-02-video-input.md`](milestone-02-video-input.md).
 
 **1. The bounded headless pipeline in §4.2 does not behave as predicted.**
 Risk 4 was well placed. `identity eos-after=N` does exit 0, but under

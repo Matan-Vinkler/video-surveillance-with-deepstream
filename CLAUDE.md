@@ -107,6 +107,14 @@ more than an unearned claim.
 - Documentation quotes **real captured output**. If behaviour changes, re-run and
   repaste — never hand-edit recorded output.
 - Route each change to the owning document (§1). Link rather than duplicate.
+- **All milestone documentation lives in `docs/`**, named `milestone-NN-<topic>.md`
+  with a zero-padded number. A milestone typically produces two files:
+  `milestone-NN-inspection.md` (the dated inspection-phase record) and
+  `milestone-NN-<subject>.md` (the implementation and verification record).
+  Never place milestone documents at the repository root — only `README.md`,
+  `PLAN.md` and `CLAUDE.md` belong there.
+- When moving a document, use `git mv` to preserve history, and fix relative links
+  both **to** it and **inside** it.
 - Record **why**, not just what. A decision without its rationale is not documented.
 - When a limitation is discovered, document it as a limitation. Do not quietly
   work around it.

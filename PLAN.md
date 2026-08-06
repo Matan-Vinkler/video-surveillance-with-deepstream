@@ -64,7 +64,7 @@ learning progress (§7) is tracked separately.
 | № | Milestone | Status | Documentation |
 |---|---|---|---|
 | 1 | Define Use Case | Complete | §5 below (no artifacts in this repo) |
-| 2 | Collect or Simulate Video Input | Complete | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md), [`REPORT.md`](REPORT.md) |
+| 2 | Collect or Simulate Video Input | Complete | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md), [`docs/milestone-02-inspection.md`](docs/milestone-02-inspection.md) |
 | 3 | Select Pretrained Model | Not started | — |
 | 4 | Optimize Model using TensorRT | Not started | — |
 | 5 | Build DeepStream Inference Pipeline | Not started | — |
@@ -115,7 +115,7 @@ Triton, Docker, MQTT, monitoring.
 - No inference component added
 
 Full record: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
-Inspection-phase record: [`REPORT.md`](REPORT.md).
+Inspection-phase record: [`docs/milestone-02-inspection.md`](docs/milestone-02-inspection.md).
 
 ---
 
@@ -178,6 +178,7 @@ related but not identical.
 | Frame-bound and pacing verified by **two separate runs** | `basesink` syncs EOS to the segment end, so a frame bound cannot shorten a paced run ([detail](docs/milestone-02-video-input.md)) | 2 | Active |
 | Looping re-runs the pipeline, not a segment seek | Keeps the pipeline minimal and explainable; costs ~0.17 s per pass | 2 | Active |
 | Flat repository root | Avoids `video-surveillance/deepstream-video-surveillance/` nesting | 2 | Active |
+| All milestone documentation lives in `docs/`, named `milestone-NN-<topic>.md` | A root-level report per milestone does not scale; one predictable location and naming scheme | 2 | Active |
 
 ---
 
@@ -198,8 +199,6 @@ Off the critical path; recorded so they do not become scope.
   segment-sync, `DISPLAY=:1`, `videorate` anomaly, SIGINT handling) currently live
   inside the Milestone 2 document. They will matter in later milestones. Promote
   them to a durable platform-notes file?
-- **`REPORT.md` placement** — a root-level per-milestone inspection report will not
-  scale past a few milestones. Move to `docs/` and set the convention?
 - **Milestone 3 model choice** — which person-detection model, and evaluated against
   what criteria?
 
