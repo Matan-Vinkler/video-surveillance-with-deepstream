@@ -1,205 +1,233 @@
-# video-surveillance
+# Video Surveillance with DeepStream
 
-A capstone project on an NVIDIA Jetson Orin Nano, built one milestone at a
-time. The eventual use case is **detecting people in a restricted area**.
+**Real-time person detection on an NVIDIA Jetson Orin Nano**, built from GStreamer,
+TensorRT and DeepStream.
 
-Current state: **person detection running end to end.** A recorded video is
-replayed as a simulated camera, TrafficCamNet is optimised into FP32/FP16/INT8
-TensorRT engines, and the FP16 engine runs on that source through DeepStream,
-producing verified `person` metadata and visible bounding boxes.
+A recorded video is replayed as a simulated camera — paced in real time, not
+consumed as fast as the hardware allows — and every frame is run through a
+TensorRT-optimised person detector. Detections are drawn on screen and exposed as
+structured metadata, so results can be checked by a machine rather than by eye.
 
-There is no tracking, no restricted-zone analytics, no Triton, no Docker, no MQTT
-and no monitoring yet.
-
----
-
-## Milestone 02 — Simulated camera stream
-
-A recorded video is replayed through an **explicit** GStreamer pipeline so it
-behaves like a live camera: paced in real time rather than consumed as fast as
-the hardware allows.
-
-```
-filesrc ! qtdemux ! queue ! h264parse ! nvv4l2decoder ! nv3dsink sync=true
-```
-
-No `playbin` — every element is chosen deliberately and explained in
-[`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
-
-**Sources** (both from the DeepStream samples, read from their install path and
-**not committed** to this repository — see [`media/README.md`](media/README.md)):
-
-| Role | File | Codec | Resolution | FPS | Duration | Scene |
-|---|---|---|---|---|---|---|
-| **Default** | `sample_walk.mov` | H.264 Main | 1920x1080 | 29.97 | 9.61 s | One person walking across frame |
-| `--crowded` | `sample_1080p_h264.mp4` | H.264 High | 1920x1080 | 30 | 48.10 s | Many pedestrians, a cyclist, traffic |
-
-Both are H.264 inside an ISO-BMFF/QuickTime container, so the **same explicit
-pipeline serves both unchanged** — only the negotiated `profile` and framerate
-differ. The short default clip is meant to be looped.
+Everything runs on the device. Nothing is downloaded at run time, no model is
+trained, and no cloud service is involved.
 
 ---
 
-## Milestone 04 — TensorRT engines
+## Pipeline
 
-TrafficCamNet (DetectNet_v2, pruned ResNet18) is built into three TensorRT
-engines at batch 1, `1x3x544x960`. Engines are **generated locally and never
-committed** — see [`models/README.md`](models/README.md).
+```mermaid
+flowchart LR
+    A["sample_walk.mov<br/>H.264 1080p 29.97 fps"]
+    B["nvv4l2decoder<br/>NVDEC hardware decode"]
+    C["nvstreammux<br/>batch = 1"]
+    D["nvinfer<br/>TrafficCamNet FP16"]
+    E["nvmultistreamtiler<br/>1x1"]
+    F["nvdsosd<br/>draws boxes + labels"]
+    G["nv3dsink<br/>or fakesink, headless"]
+    H["per-frame metadata dump<br/>class, confidence, box"]
 
-Measured on this Jetson Orin Nano, 3 interleaved repetitions each:
-
-| Engine | GPU compute | End-to-end | Throughput | Size | Frame budget used |
-|---|---|---|---|---|---|
-| FP32 (`--noTF32`) | 12.70 ms | 12.95 ms | 78.7 qps | 9.01 MiB | 38.8% |
-| FP16 | 3.22 ms | 3.53 ms | 310.1 qps | 3.05 MiB | 10.6% |
-| INT8 (+FP16 fallback) | 1.93 ms | 2.29 ms | 517.4 qps | 2.59 MiB | 6.9% |
-
-**All three are real-time for one 29.97 fps camera** (33.37 ms per frame), so
-precision is a headroom decision rather than a feasibility one.
-
-> These are **performance** measurements only. `trtexec` runs on random input
-> tensors and never sees a video frame, so nothing here says whether FP16 or INT8
-> preserves detection quality. See
-> [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md) §8.
-
----
-
-## Milestone 05 — DeepStream inference pipeline (checkpoint 1)
-
-The FP16 engine runs on the simulated camera source through `deepstream-app`:
-
-```
-file source → decoder → nvstreammux → nvinfer → nvmultistreamtiler
-            → nvdsosd → sink
+    A --> B --> C --> D --> E --> F --> G
+    D -. "NvDsObjectMeta" .-> H
 ```
 
-Measured on `sample_walk.mov`, at the stock reference thresholds:
+Frames stay in NVMM (NVIDIA hardware memory) from decode to display, so there is
+no copy into system memory anywhere in the path.
+
+## What it does
+
+- **Simulates a camera** from a recorded clip, paced by the pipeline clock so it
+  behaves like a live 30 fps source rather than a file being read at full speed.
+- **Detects people** with TrafficCamNet, running as a TensorRT engine on the GPU.
+- **Draws bounding boxes and labels** on screen, colour-coded per class.
+- **Emits per-frame detection metadata** — class, confidence and box coordinates —
+  so correctness is asserted from data, never from "it looked right".
+- **Verifies itself headlessly**: one command runs the whole pipeline with no
+  display, checks eight properties of the result, and exits non-zero on failure.
+
+## Results
+
+Detection on the default clip, at the model's stock reference thresholds:
 
 | | |
 |---|---|
 | Frames processed | **288 of 288** |
 | `person` detections | **230**, across 230 frames (79.9%) |
 | False positives | **zero** `car`, `bicycle` or `road_sign` in 288 frames |
-| Confidence on the walker | 0.67 – 0.82 |
-| Engine | prebuilt FP16, **deserialized not rebuilt** (asserted) |
+| Confidence on the subject | 0.67 – 0.82 |
 
-Detections are verified from **per-frame KITTI metadata**, not from appearance —
-`./scripts/verify_inference.sh` asserts the engine was loaded rather than rebuilt,
-that batch size is 1 end to end, that `person` detections exist, and that
-`class_id 2` really is `person` (proven by re-running with classes 0, 1 and 3
-filtered out).
+Inference cost, measured per precision at batch 1, 960×544 (3 interleaved
+repetitions each):
 
-> **The 1x1 tiler is load-bearing.** It tiles nothing — there is one source — but
-> without it `nvdsosd` draws into a buffer it received by reference and previous
-> frames' boxes persist as a visible trail. See
-> [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md).
+| Engine | GPU compute | End-to-end | Throughput | Size | Frame budget used |
+|---|---|---|---|---|---|
+| FP32 | 12.70 ms | 12.95 ms | 78.7 qps | 9.01 MiB | 38.8% |
+| **FP16** *(default)* | **3.22 ms** | **3.53 ms** | **310.1 qps** | **3.05 MiB** | **10.6%** |
+| INT8 | 1.93 ms | 2.29 ms | 517.4 qps | 2.59 MiB | 6.9% |
 
----
+All three are comfortably real-time for one 29.97 fps camera (a 33.37 ms budget
+per frame), so precision is a headroom decision rather than a feasibility one.
+FP16 is the default; INT8 is built and benchmarked but held in reserve.
+
+> These are **performance** figures. They say nothing about whether reduced
+> precision preserves detection accuracy — that is a separate experiment, and the
+> evidence it would require is
+> [defined but not yet gathered](docs/milestone-04-tensorrt-optimization.md).
 
 ## Requirements
 
-- NVIDIA Jetson with L4T and DeepStream installed (developed on L4T R39.2,
-  Ubuntu 24.04, DeepStream 9.1.0)
-- GStreamer 1.x with `gst-launch-1.0`, `gst-inspect-1.0`, `gst-discoverer-1.0`
-- The NVIDIA GStreamer elements `nvv4l2decoder` and `nv3dsink`
+- **NVIDIA Jetson** with L4T and DeepStream. Developed on a Jetson Orin Nano,
+  L4T R39.2, Ubuntu 24.04, DeepStream 9.1.0, TensorRT 10.16.2, CUDA 13.2.
+- **GStreamer 1.x** with `gst-launch-1.0`, `gst-inspect-1.0`, `gst-discoverer-1.0`.
+- **NVIDIA GStreamer elements**: `nvv4l2decoder`, `nvstreammux`, `nvinfer`,
+  `nvmultistreamtiler`, `nvdsosd`, `nv3dsink`.
+- A display, **only** for the visible playback commands. Everything else runs
+  headlessly.
 
-Nothing needs to be installed, downloaded or built. The DeepStream version is
-discovered at run time through the `/opt/nvidia/deepstream/deepstream` symlink,
-so no version is hard-coded.
+Nothing needs to be installed or downloaded. The model, the calibration data and
+the sample video all ship with DeepStream and are read from their install path.
+The DeepStream version is discovered at run time through the
+`/opt/nvidia/deepstream/deepstream` symlink, so no version is hard-coded anywhere.
 
 ## Quick start
 
 ```bash
-# 1. Check the environment (tools, DeepStream, elements, display)
-./scripts/common.sh --selftest
+# 1. Check the environment
+./scripts/common.sh --selftest        # GStreamer, DeepStream, elements, display
+./scripts/trt_common.sh --selftest    # TensorRT toolchain and model assets
 
-# 2. Inspect the source: container, codec, resolution, frame rate, duration
-./scripts/inspect_video.sh
-./scripts/inspect_video.sh --caps             # also dump negotiated caps per link
-./scripts/inspect_video.sh sample_1080p_h264.mp4   # any other sample or path
-
-# 3. Verify headlessly - needs no display, exits on its own, never loops
-./scripts/verify_simulated_stream.sh          # ~12 s, default 9.61 s source
-./scripts/verify_simulated_stream.sh --crowded     # ~56 s, paces the 48 s source
-
-# 4. Watch it, if a display is available
-./scripts/run_simulated_stream.sh             # one pass of the default source
-./scripts/run_simulated_stream.sh --loop      # replay until Ctrl-C
-./scripts/run_simulated_stream.sh --passes 3  # replay exactly 3 times
-./scripts/run_simulated_stream.sh --crowded   # busier 48 s source
-./scripts/run_simulated_stream.sh --sink fakesink --passes 2   # no window
-
-# 5. TensorRT: check the toolchain, then the model contract
-./scripts/trt_common.sh --selftest
-./scripts/inspect_model.sh                    # parses only; builds nothing
-
-# 6. Build the engines (~4.5 min total), then see what they actually are
+# 2. Build the TensorRT engines (~4.5 min; one-off)
 ./scripts/build_engines.sh --precision all
-./scripts/engine_report.sh
 
-# 7. Compare them (~16 min, interleaved with repetitions)
-./scripts/benchmark_engines.sh
-
-# 8. Run inference on the simulated camera and verify it headlessly
+# 3. Run detection and verify it, headlessly
 ./scripts/ds_common.sh --selftest
 ./scripts/verify_inference.sh
 
-# 9. Watch it detect people, if a display is available
+# 4. Watch it, if a display is attached
 ./scripts/run_inference.sh
 ```
 
-On this machine the desktop session runs on the console, so the shell needs to
-be pointed at it explicitly if `DISPLAY` is unset:
+If `DISPLAY` is unset in your shell but a desktop session is running on the
+console, point at it explicitly:
 
 ```bash
-DISPLAY=:1 ./scripts/run_simulated_stream.sh
+DISPLAY=:1 ./scripts/run_inference.sh
 ```
 
 The window opens on the physically attached monitor, not in an SSH client.
 
-## Scripts
+## Usage
 
-| Script | Purpose |
+**Inference**
+
+| Command | What it does |
 |---|---|
-| `scripts/common.sh` | Shared helpers: DeepStream discovery, video resolution, element preflight, display detection. Run with `--selftest`. |
-| `scripts/inspect_video.sh` | Reports container, codec, resolution, frame rate, duration; `--caps` shows caps negotiated at each link. |
-| `scripts/run_simulated_stream.sh` | Visible real-time playback, optionally looping. Fails with guidance when no display is usable. |
-| `scripts/verify_simulated_stream.sh` | Headless verification: bounded frame flow, plus a measured real-time pacing check. Always bounded, never loops. Non-zero exit on failure. |
-| `scripts/trt_common.sh` | Milestone 4 helpers: TensorRT discovery, model paths, engine naming, GPU and thermal state. Run with `--selftest`. |
-| `scripts/inspect_model.sh` | Parses the ONNX with TensorRT and reports its input/output contract plus INT8 calibration-cache coverage. Builds nothing. |
-| `scripts/build_engines.sh` | Builds FP32/FP16/INT8 engines and verifies each artifact. Never benchmarks. |
-| `scripts/engine_report.sh` | Reports what an engine **actually** is — the per-layer precisions TensorRT selected, not the ones requested. |
-| `scripts/benchmark_engines.sh` | Interleaved, repeated comparison of the built engines, with spread reporting. Never builds. |
-| `scripts/ds_common.sh` | Milestone 5 helpers: engine symlink resolution, config preflight. Run with `--selftest`. |
-| `scripts/verify_inference.sh` | Headless, machine-checked verification of the inference pipeline against KITTI detection metadata. Non-zero exit on failure. |
-| `scripts/run_inference.sh` | Visible playback with bounding boxes. Fails with guidance when no display is usable. |
+| `./scripts/run_inference.sh` | Visible detection with bounding boxes, paced in real time |
+| `./scripts/verify_inference.sh` | Headless run with eight machine-checked assertions |
 
-## Looping
+**Model and engines**
 
-`--loop` replays until Ctrl-C; `--passes N` runs a fixed number of times.
-Each pass re-runs the pipeline rather than seeking inside it, which keeps the
-pipeline the minimal explainable one. The cost is a short gap between passes
-(~0.17 s on this machine) while NVDEC is torn down and re-initialised. Gapless
-looping would need a segment seek driven from an application with a bus
-handler — deliberately out of scope here.
+| Command | What it does |
+|---|---|
+| `./scripts/inspect_model.sh` | Reports the model's input/output contract and INT8 calibration coverage. Builds nothing |
+| `./scripts/build_engines.sh --precision fp16` | Builds one engine (`fp32`, `fp16`, `int8` or `all`) and verifies the artifact |
+| `./scripts/engine_report.sh` | Reports what an engine **actually** is — the per-layer precisions TensorRT selected, not the ones requested |
+| `./scripts/benchmark_engines.sh` | Interleaved, repeated precision comparison with spread reporting |
 
-Headless verification is unaffected: it is always bounded and never loops.
+**Video source**
 
-## What "paced in real time" means here
+| Command | What it does |
+|---|---|
+| `./scripts/inspect_video.sh [--caps]` | Container, codec, resolution, frame rate, duration; `--caps` dumps negotiated caps per link |
+| `./scripts/run_simulated_stream.sh [--loop]` | Visible playback of the source alone, no inference |
+| `./scripts/verify_simulated_stream.sh` | Headless check of frame flow and real-time pacing |
 
-The sink's `sync=true` holds every decoded frame until its presentation
-timestamp arrives, which back-pressures the decoder and the file reader. The
-verification script proves it by measurement rather than assertion:
+Two sources are available: `sample_walk.mov` (default — one person walking,
+9.61 s) and `sample_1080p_h264.mp4` (`--crowded` — many pedestrians, a cyclist and
+traffic, 48.10 s). Both are H.264 in an ISO-BMFF container, so the same pipeline
+serves both unchanged.
 
-| Clip | Real duration | `sync=true` | `sync=false` |
-|---|---|---|---|
-| `sample_walk.mov` (default) | 9.61 s | 9.80 s | 1.53 s |
-| `sample_1080p_h264.mp4` (`--crowded`) | 48.10 s | 48.28 s | 6.02 s |
+## How it works
+
+**Simulated camera.** Nothing about a file is inherently real-time. The pacing
+comes from clock synchronisation at the sink: each decoded frame is held until its
+presentation timestamp arrives, which back-pressures the decoder and the file
+reader until the whole pipeline settles at the clip's natural frame rate. Proven
+by measurement — 9.80 s paced against a 9.61 s clip, versus 1.53 s unpaced.
+[Full detail →](docs/milestone-02-video-input.md)
+
+**Detection model.** TrafficCamNet is a DetectNet_v2 detector on a pruned ResNet18
+backbone. It is fully convolutional with no anchor boxes and no NMS inside the
+network: for each cell of a 60×34 grid it predicts a per-class confidence and four
+box-edge offsets. Clustering those overlapping predictions into single detections
+happens outside the model, in DeepStream, and is configurable.
+[Full detail →](docs/milestone-03-model-selection.md)
+
+**Precision.** The ONNX model is compiled into TensorRT engines at FP32, FP16 and
+INT8. INT8 uses the calibration cache NVIDIA ships, so no calibration dataset is
+needed. Engines are treated as build artifacts, never committed — one is valid
+only for the TensorRT version, GPU and batch profile that produced it.
+[Full detail →](docs/milestone-04-tensorrt-optimization.md)
+
+**Inference pipeline.** `nvstreammux` batches frames and attaches the metadata
+structure; `nvinfer` preprocesses, runs the engine and attaches one
+`NvDsObjectMeta` per detection; `nvdsosd` draws them. The 1×1 tiler looks
+redundant with a single source but is required — without a fresh buffer upstream,
+the OSD draws in place and previous frames' boxes persist as a visible trail.
+[Full detail →](docs/milestone-05-inference-pipeline.md) ·
+[the ghosting investigation →](docs/milestone-05-osd-ghosting.md)
+
+## Verification
+
+`./scripts/verify_inference.sh` runs the full pipeline headlessly and asserts:
+
+1. The application runs to a clean end of stream.
+2. The prebuilt engine was **deserialized, not rebuilt** — checked in the log and
+   by an unchanged checksum.
+3. Every frame in the clip was decoded and processed.
+4. Batch size is 1 end to end, with no engine/config capability mismatch.
+5. `nvinfer` reports no configuration or parser errors.
+6. `person` detections exist, with raw per-class counts reported.
+7. `class_id 2` really is `person` — proven by re-running with the other classes
+   filtered out, so anything surviving is class 2 by construction.
+8. No tracker or analytics metadata exists.
+
+It needs no display, terminates on its own, and exits non-zero on any failure.
+Detection evidence comes from a per-frame metadata dump, so a passing run is a
+statement about data rather than about appearance.
+
+## Project structure
+
+```
+├── configs/     DeepStream application and nvinfer configuration
+├── scripts/     Inspection, build, run and verification scripts
+├── docs/        Design notes, investigations and verification records
+├── models/      Generated TensorRT engines (git-ignored) + rationale
+└── media/       Video sources are read from DeepStream, never committed
+```
 
 ## Documentation
 
-[`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md) covers
-container vs codec, what each element does, static vs dynamic pads, where caps
-negotiation happens, the raw pixel format the decoder produces
-(`NV12` in `memory:NVMM`), how pacing works, full verification output, and
-known limitations.
+| Topic | Document |
+|---|---|
+| Video input and real-time pacing | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md) |
+| Model selection and DetectNet_v2 internals | [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md) |
+| TensorRT optimisation and benchmarks | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md) |
+| Inference pipeline | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md) |
+| The OSD ghosting investigation | [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md) |
+| Engineering roadmap and decisions | [`PLAN.md`](PLAN.md) |
+
+Each document records not just what was built but **why**, along with the
+verification evidence and an explicit statement of what remains unproven.
+
+## Roadmap
+
+Person detection works end to end. Object tracking and restricted-zone analytics
+are next, followed by containerisation and deployment — see [`PLAN.md`](PLAN.md).
+
+## Third-party assets
+
+The detection model, its INT8 calibration cache, and the sample videos are
+**NVIDIA DeepStream SDK assets**, read from their install path on the target
+machine and never redistributed here. They are covered by the DeepStream SDK
+licence, not by this project. See [`media/README.md`](media/README.md) and
+[`models/README.md`](models/README.md).
