@@ -26,3 +26,7 @@ models/engines/
 *~
 *.swp
 .DS_Store
+
+# Per-frame detection metadata (KITTI dump) written by the Milestone 5
+# verification run. Regenerated on every run; never committed.
+models/detections/

@@ -1,0 +1,96 @@
+# deepstream-app: HEADLESS verification pipeline, Milestone 5 checkpoint 1.
+#
+#   file source -> decoder -> nvstreammux -> nvinfer -> nvmultistreamtiler
+#                -> nvdsosd -> fakesink
+#
+# No tracker, no analytics, no secondary inference. Bounded: one pass of a
+# 9.61 s clip to natural EOS, never looping.
+#
+# Paths are resolved relative to THIS file's directory.
+
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=5
+# Per-frame detection metadata in KITTI format, written from a probe on the
+# nvdsosd sink pad -- i.e. AFTER nvinfer and BEFORE any tracker. This is the
+# machine-readable evidence that object metadata is really being produced.
+# One file per frame: <appIdx>_<streamId>_<frameNum>.txt
+# The directory must already exist; scripts/verify_inference.sh creates it.
+gie-kitti-output-dir=../models/detections
+
+# A 1x1 tiler. Not needed to *tile* anything -- there is one source -- but
+# required for correct OSD rendering. Without it, nvdsosd draws into a buffer it
+# received by reference (osd_conv negotiates NV12 -> NV12 and converts nothing),
+# and previous frames' boxes persist as a visible trail. The tiler composites
+# into a fresh buffer, which removes the artifact while keeping the GPU draw
+# path. Every stock NVIDIA rendering config uses a tiler for the same reason.
+# Full experiment and evidence: docs/milestone-05-osd-ghosting.md
+[tiled-display]
+enable=1
+rows=1
+columns=1
+width=1920
+height=1080
+gpu-id=0
+nvbuf-memory-type=0
+
+# Type 2 = URI. The unversioned /opt/nvidia/deepstream/deepstream symlink keeps
+# the DeepStream version out of this file.
+[source0]
+enable=1
+type=2
+uri=file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_walk.mov
+gpu-id=0
+cudadec-memtype=0
+
+# Type 1 = FakeSink. Genuinely consumes buffers, opens no window.
+# sync=0: verification should not wait out the clip's 9.61 s in real time.
+[sink0]
+enable=1
+type=1
+sync=0
+source-id=0
+gpu-id=0
+
+# OSD stays enabled even headless. It is what makes nvinfer's metadata be drawn,
+# and the KITTI probe attaches to its sink pad.
+[osd]
+enable=1
+gpu-id=0
+border-width=3
+text-size=15
+text-color=1;1;1;1;
+text-bg-color=0.3;0.3;0.3;1
+font=Serif
+show-clock=0
+nvbuf-memory-type=0
+
+# width/height are the MUX OUTPUT resolution, i.e. the source resolution --
+# NOT the 960x544 network input. nvinfer scales to the network size itself.
+# live-source=0 because this is a file, not a live camera.
+[streammux]
+gpu-id=0
+live-source=0
+batch-size=1
+batched-push-timeout=40000
+width=1920
+height=1080
+enable-padding=0
+nvbuf-memory-type=0
+
+[primary-gie]
+enable=1
+gpu-id=0
+batch-size=1
+gie-unique-id=1
+nvbuf-memory-type=0
+config-file=config_infer_primary_trafficcamnet.txt
+# Per-class box colours. Class 2 = person, drawn blue.
+bbox-border-color0=1;0;0;1
+bbox-border-color1=0;1;1;1
+bbox-border-color2=0;0;1;1
+bbox-border-color3=0;1;0;1
+
+# Never loop: verification must terminate on its own.
+[tests]
+file-loop=0

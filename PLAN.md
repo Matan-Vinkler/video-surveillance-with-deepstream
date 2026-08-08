@@ -28,23 +28,28 @@ Target end state, and where the work currently sits:
 
 ```
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
-   [DONE M2]      [DONE M3-M4]        [M5]           [M5]           [M9]
-       │           not yet joined                                    │
-  GStreamer:       TrafficCamNet                                monitoring,
-  filesrc ! qtdemux  TensorRT engines                           logging
-  ! queue ! h264parse  fp32 / fp16 / int8
-  ! nvv4l2decoder      (built + benchmarked,
-  ! sink                not yet in a pipeline)
+   [DONE M2]      [DONE M3-M5.1]      [M5.2]         [M5.3]         [M9]
+       │                │                                            │
+  DeepStream:      TrafficCamNet FP16                           monitoring,
+  source ! decoder   TensorRT engine                            logging
+  ! nvstreammux      via nvinfer
+  ! nvinfer          -> NvDsObjectMeta
+  ! nvmultistreamtiler
+  ! nvdsosd ! sink
 ```
 
-Currently implemented: two stages that **do not yet meet**. A recorded video is
-replayed through an explicit GStreamer pipeline as a simulated camera paced in
-real time (M2), and TrafficCamNet has been selected (M3) and optimised into
-FP32/FP16/INT8 TensorRT engines (M4). Nothing yet feeds decoded frames into an
-engine — that junction is Milestone 5.
+Currently implemented: **video input through to visible person detection**. A
+recorded video is replayed as a simulated camera (M2), TrafficCamNet was selected
+(M3) and optimised into TensorRT engines (M4), and the FP16 engine now runs on
+that source through `deepstream-app`, producing verified `person` metadata and
+on-screen bounding boxes (M5 checkpoint 1).
+
+Still missing: tracking (object identity across frames) and restricted-zone
+analytics — the remaining Milestone 5 checkpoints.
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
+Inference pipeline: [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md).
 
 ---
 
@@ -57,7 +62,7 @@ learning progress (§7) is tracked separately.
 - [x] **2. Collect or Simulate Video Input**
 - [x] **3. Select Pretrained Model**
 - [x] **4. Optimize Model using TensorRT**
-- [ ] **5. Build DeepStream Inference Pipeline** ← next
+- [ ] **5. Build DeepStream Inference Pipeline** ← active (checkpoint 1 of 3 complete)
 - [ ] **6. Containerize the Application**
 - [ ] **7. Deploy Inference with Triton Inference Server**
 - [ ] **8. Deploy on Edge Device (Jetson)**
@@ -70,7 +75,7 @@ learning progress (§7) is tracked separately.
 | 2 | Collect or Simulate Video Input | Complete | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md), [`docs/milestone-02-inspection.md`](docs/milestone-02-inspection.md) |
 | 3 | Select Pretrained Model | Complete | [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md) |
 | 4 | Optimize Model using TensorRT | Complete | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md), [`docs/milestone-04-inspection.md`](docs/milestone-04-inspection.md) |
-| 5 | Build DeepStream Inference Pipeline | Not started | — |
+| 5 | Build DeepStream Inference Pipeline | **In progress** — checkpoint 1 complete | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md), [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md), [`docs/milestone-05-inspection.md`](docs/milestone-05-inspection.md) |
 | 6 | Containerize the Application | Not started | — |
 | 7 | Deploy Inference with Triton | Not started | — |
 | 8 | Deploy on Edge Device (Jetson) | Not started | — |
@@ -81,24 +86,33 @@ learning progress (§7) is tracked separately.
 
 ## 4. Current milestone
 
-**None active.** Milestone 4 is complete; Milestone 5 has not been opened.
+**Milestone 5 is active. Checkpoint 1 of 3 is complete.**
 
-**Next up — Milestone 5: Build DeepStream Inference Pipeline.** Expected shape:
-join the two stages that currently exist but do not meet — feed the M2 decoded
-frames into the M4 engine via `nvstreammux` + `nvinfer`, then add tracking and
-restricted-zone analytics.
+| # | Checkpoint | Status |
+|---|---|---|
+| 5.1 | Inference pipeline producing visible person detections | **Complete** |
+| 5.2 | Tracking (`nvtracker`) — object identity across frames | Not started |
+| 5.3 | Restricted-zone analytics (`nvdsanalytics`) | Not started |
 
-Two things carry into M5 as inputs rather than open questions:
+**Checkpoint 1 delivered:** `deepstream-app` running the FP16 engine on
+`sample_walk.mov`, producing 230 verified `person` detections across 288 frames
+and visible bounding boxes. Verified headlessly against detection metadata, not
+appearance. Full record:
+[`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md).
 
-- **FP16 is the default** ([rationale](docs/milestone-04-tensorrt-optimization.md)).
-  All three engines are real-time for one camera; FP16 costs 10.6% of the frame
-  budget against INT8's 6.9%, and INT8 carries unquantified accuracy risk.
-  **INT8 stays available** — if the assembled pipeline's added stages eat enough
-  of the 33.37 ms budget, the extra headroom becomes worth revisiting, and the
-  engine and its benchmark already exist.
-- **Engines cannot live where DeepStream expects them.** The DeepStream models
-  directory is root-owned and there is no `sudo`, so `nvinfer` must be pointed at
-  `models/engines/` explicitly.
+**Next — checkpoint 2: tracking.** Add `nvtracker` so detections acquire a
+persistent `object_id`. That identity is a prerequisite for zone logic: "a person
+entered the zone" is a statement about one tracked object over time, not about
+independent per-frame detections.
+
+Carried forward into the remaining checkpoints:
+
+- **FP16 remains the default.** INT8 stays available if the added stages consume
+  enough of the 33.37 ms frame budget to justify revisiting it.
+- **The 1x1 tiler is load-bearing**, not decoration — removing it reintroduces the
+  OSD trail ([detail](docs/milestone-05-osd-ghosting.md)).
+- **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine in
+  isolation. Worth measuring once tracking and analytics are in.
 
 Out of scope until explicitly opened: Triton, Docker, MQTT, monitoring.
 
@@ -184,7 +198,6 @@ Deliberately thin — detail is added when a milestone is opened.
 
 | № | Milestone | Expected focus |
 |---|---|---|
-| 5 | Build DeepStream Inference Pipeline | `nvstreammux`, `nvinfer`, tracking, restricted-zone analytics |
 | 6 | Containerize the Application | Reproducible image for the Jetson target |
 | 7 | Deploy with Triton | Model serving, `nvinferserver` |
 | 8 | Deploy on Edge Device | Standalone operation on the Jetson |
@@ -243,6 +256,24 @@ related but not identical.
 - [x] GPU compute time vs end-to-end latency, and when each misleads
 - [x] Distinguishing performance measurement from accuracy validation
 
+**From Milestone 5 — Inference Pipeline (checkpoint 1)**
+
+- [x] `deepstream-app` configuration model: `[source]`, `[streammux]`,
+      `[primary-gie]`, `[tiled-display]`, `[osd]`, `[sink]`
+- [x] `nvstreammux` batching, and why its width/height is the source resolution
+      rather than the network input size
+- [x] Where `NvDsBatchMeta` first appears and where `NvDsObjectMeta` is attached
+- [x] Loading a prebuilt engine into `nvinfer` and preventing a silent rebuild
+- [x] `checkBackendParams`: how nvinfer validates an engine against config
+- [x] KITTI metadata dump as machine-verifiable detection evidence
+- [x] Proving a class mapping by experiment (`filter-out-class-ids`) rather than
+      by reading source
+- [x] GStreamer caps negotiation as a *runtime* fact: an element's presence does
+      not imply it converts anything
+- [x] `nvdsosd` process modes, and why in-place drawing without a fresh buffer
+      produces rendering artifacts
+- [x] That metadata-level tests can pass while rendered output is visibly wrong
+
 ---
 
 ## 8. Key engineering decisions
@@ -272,6 +303,12 @@ related but not identical.
 | `common.sh` left untouched; M4 helpers in `trt_common.sh` | Milestone 2 is frozen (CLAUDE.md §9); its scripts and verification stay byte-identical | 4 | Active |
 | **FP16 is the default for M5** | All precisions are real-time; FP16 costs 10.6% of the frame budget vs INT8's 6.9%, and INT8's accuracy risk is unquantified | 4 | Active |
 | INT8 retained, not discarded | Built, benchmarked and reproducible. Reconsider if M5's added stages (mux, tracker, analytics, OSD) consume enough of the 33.37 ms budget that the extra 1.24 ms of headroom matters | 4 | Active |
+| `deepstream-app` with `.txt` configs, not a custom app | Faithful to the capstone requirement; nothing in checkpoint 1 needed code | 5 | Active |
+| `onnx-file` omitted from the nvinfer config | With no ONNX to fall back to, a failed engine load cannot silently rebuild — it fails loudly. Demonstrated | 5 | Active |
+| Engine referenced via a version-free symlink | Keeps the TensorRT version and GPU name out of a committed config, while the wrapper resolves the exact expected engine | 5 | Active |
+| Detections verified from KITTI metadata, never from appearance | "I saw a box" is not evidence; the dump gives per-frame, per-class counts | 5 | Active |
+| **A 1x1 `nvmultistreamtiler` in the display path** | Without a fresh buffer upstream, `nvdsosd` draws in place and previous frames' boxes persist as a trail. The tiler fixes it while keeping the GPU draw path; matches all 21 stock NVIDIA configs ([detail](docs/milestone-05-osd-ghosting.md)) | 5 | Active |
+| OSD left in GPU mode, CPU mode rejected | CPU mode also removed the trail, but only as a side effect of forcing an RGBA conversion. Adopting it would have meant fixing the symptom for the wrong reason | 5 | Active |
 
 ---
 
@@ -304,6 +341,14 @@ Off the critical path; recorded so they do not become scope.
 - **Triton is unusable on this machine** — `libtritonserver.so` is absent and
   `triton_backend_setup.sh` needs root. M7 assumes a capability that does not
   currently exist. Resolve before opening M7.
+- **The OSD ghosting mechanism is unproven.** The *variable* is isolated — a fresh
+  buffer upstream of `nvdsosd` is required — but *why* in-place drawing persists
+  across frames was not established
+  ([detail](docs/milestone-05-osd-ghosting.md) §8). The fix does not depend on the
+  answer. Worth closing only if the artifact reappears in another topology.
+- **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine
+  alone; the assembled pipeline has no performance figure. Measure once tracking
+  and analytics are in, rather than twice.
 
 ---
 
@@ -314,3 +359,5 @@ Off the critical path; recorded so they do not become scope.
 | Git identity not configured globally | Low — commits pass it inline via `git -c` | Before any multi-author work |
 | Pipeline is H.264-in-MP4/MOV specific | None today; blocks other sources | If a non-H.264 source is introduced |
 | No labelled ground truth for any sample clip | Medium — caps quality work at "divergence from FP32", never "correctness" | When detection accuracy must be claimed rather than compared |
+| Detection counts vary ~1% between identical runs | Low — two frames of 288 differ by one borderline detection; verification asserts `> 0`, not an exact count | If reproducible counts ever become a requirement |
+| Rendering correctness needs a human | Medium — the automated suite passed while output was visibly wrong. No headless check covers OSD drawing | If visible regressions recur; would need frame capture and comparison |

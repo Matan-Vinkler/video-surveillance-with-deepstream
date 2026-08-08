@@ -3,11 +3,13 @@
 A capstone project on an NVIDIA Jetson Orin Nano, built one milestone at a
 time. The eventual use case is **detecting people in a restricted area**.
 
-Current state: **video input and optimised TensorRT engines — not yet joined.**
-A recorded video is replayed as a simulated camera, and TrafficCamNet has been
-built into FP32/FP16/INT8 TensorRT engines and benchmarked. Nothing yet feeds
-decoded frames into an engine. There is no DeepStream inference, no tracking, no
-Triton, no Docker, no MQTT and no monitoring in this repository yet.
+Current state: **person detection running end to end.** A recorded video is
+replayed as a simulated camera, TrafficCamNet is optimised into FP32/FP16/INT8
+TensorRT engines, and the FP16 engine runs on that source through DeepStream,
+producing verified `person` metadata and visible bounding boxes.
+
+There is no tracking, no restricted-zone analytics, no Triton, no Docker, no MQTT
+and no monitoring yet.
 
 ---
 
@@ -62,6 +64,38 @@ precision is a headroom decision rather than a feasibility one.
 
 ---
 
+## Milestone 05 — DeepStream inference pipeline (checkpoint 1)
+
+The FP16 engine runs on the simulated camera source through `deepstream-app`:
+
+```
+file source → decoder → nvstreammux → nvinfer → nvmultistreamtiler
+            → nvdsosd → sink
+```
+
+Measured on `sample_walk.mov`, at the stock reference thresholds:
+
+| | |
+|---|---|
+| Frames processed | **288 of 288** |
+| `person` detections | **230**, across 230 frames (79.9%) |
+| False positives | **zero** `car`, `bicycle` or `road_sign` in 288 frames |
+| Confidence on the walker | 0.67 – 0.82 |
+| Engine | prebuilt FP16, **deserialized not rebuilt** (asserted) |
+
+Detections are verified from **per-frame KITTI metadata**, not from appearance —
+`./scripts/verify_inference.sh` asserts the engine was loaded rather than rebuilt,
+that batch size is 1 end to end, that `person` detections exist, and that
+`class_id 2` really is `person` (proven by re-running with classes 0, 1 and 3
+filtered out).
+
+> **The 1x1 tiler is load-bearing.** It tiles nothing — there is one source — but
+> without it `nvdsosd` draws into a buffer it received by reference and previous
+> frames' boxes persist as a visible trail. See
+> [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md).
+
+---
+
 ## Requirements
 
 - NVIDIA Jetson with L4T and DeepStream installed (developed on L4T R39.2,
@@ -105,6 +139,13 @@ so no version is hard-coded.
 
 # 7. Compare them (~16 min, interleaved with repetitions)
 ./scripts/benchmark_engines.sh
+
+# 8. Run inference on the simulated camera and verify it headlessly
+./scripts/ds_common.sh --selftest
+./scripts/verify_inference.sh
+
+# 9. Watch it detect people, if a display is available
+./scripts/run_inference.sh
 ```
 
 On this machine the desktop session runs on the console, so the shell needs to
@@ -129,6 +170,9 @@ The window opens on the physically attached monitor, not in an SSH client.
 | `scripts/build_engines.sh` | Builds FP32/FP16/INT8 engines and verifies each artifact. Never benchmarks. |
 | `scripts/engine_report.sh` | Reports what an engine **actually** is — the per-layer precisions TensorRT selected, not the ones requested. |
 | `scripts/benchmark_engines.sh` | Interleaved, repeated comparison of the built engines, with spread reporting. Never builds. |
+| `scripts/ds_common.sh` | Milestone 5 helpers: engine symlink resolution, config preflight. Run with `--selftest`. |
+| `scripts/verify_inference.sh` | Headless, machine-checked verification of the inference pipeline against KITTI detection metadata. Non-zero exit on failure. |
+| `scripts/run_inference.sh` | Visible playback with bounding boxes. Fails with guidance when no display is usable. |
 
 ## Looping
 

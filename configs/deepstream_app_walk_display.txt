@@ -1,0 +1,84 @@
+# deepstream-app: VISIBLE playback pipeline, Milestone 5 checkpoint 1.
+#
+#   file source -> decoder -> nvstreammux -> nvinfer -> nvmultistreamtiler
+#                -> nvdsosd -> nv3dsink
+#
+# Identical to deepstream_app_walk_headless.txt except for the sink and pacing.
+# This opens a window on the physically attached monitor. Run it through
+# scripts/run_inference.sh, which checks for a usable display first.
+#
+# No tracker, no analytics, no secondary inference.
+
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=5
+
+# A 1x1 tiler. Not needed to *tile* anything -- there is one source -- but
+# required for correct OSD rendering. Without it, nvdsosd draws into a buffer it
+# received by reference and previous frames' boxes persist as a visible trail.
+# The tiler composites into a fresh buffer, which removes the artifact while
+# keeping the GPU draw path (process-mode is left at its GPU default).
+# Full experiment and evidence: docs/milestone-05-osd-ghosting.md
+[tiled-display]
+enable=1
+rows=1
+columns=1
+width=1920
+height=1080
+gpu-id=0
+nvbuf-memory-type=0
+
+[source0]
+enable=1
+type=2
+uri=file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_walk.mov
+gpu-id=0
+cudadec-memtype=0
+
+# Type 2 = EglSink/nv3dsink. On Jetson deepstream-app selects nv3dsink -- the
+# same sink Milestone 2 validated on DISPLAY=:1.
+# sync=1 paces playback in real time, matching Milestone 2's behaviour.
+[sink0]
+enable=1
+type=2
+sync=1
+source-id=0
+gpu-id=0
+nvbuf-memory-type=0
+
+[osd]
+enable=1
+gpu-id=0
+border-width=3
+text-size=15
+text-color=1;1;1;1;
+text-bg-color=0.3;0.3;0.3;1
+font=Serif
+show-clock=0
+nvbuf-memory-type=0
+
+[streammux]
+gpu-id=0
+live-source=0
+batch-size=1
+batched-push-timeout=40000
+width=1920
+height=1080
+enable-padding=0
+nvbuf-memory-type=0
+
+[primary-gie]
+enable=1
+gpu-id=0
+batch-size=1
+gie-unique-id=1
+nvbuf-memory-type=0
+config-file=config_infer_primary_trafficcamnet.txt
+# Class 2 = person, drawn blue.
+bbox-border-color0=1;0;0;1
+bbox-border-color1=0;1;1;1
+bbox-border-color2=0;0;1;1
+bbox-border-color3=0;1;0;1
+
+[tests]
+file-loop=0
