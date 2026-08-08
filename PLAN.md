@@ -28,20 +28,22 @@ Target end state, and where the work currently sits:
 
 ```
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
-   [DONE M2]        [M3-M5]         [M5]           [M5]           [M9]
-       │                │                                           │
-  GStreamer:       TensorRT /                                  monitoring,
-  filesrc ! qtdemux    DeepStream                              logging
-  ! queue ! h264parse  nvinfer /
-  ! nvv4l2decoder      Triton
+   [DONE M2]      [M3 done: chosen]     [M5]           [M5]           [M9]
+       │           [M4-M5: to build]                                  │
+  GStreamer:       TrafficCamNet                                 monitoring,
+  filesrc ! qtdemux  (DetectNet_v2)                              logging
+  ! queue ! h264parse  → TensorRT (M4)
+  ! nvv4l2decoder      → nvinfer (M5)
   ! sink
 ```
 
 Currently implemented: the leftmost stage only — a recorded video replayed
 through an explicit GStreamer pipeline as a simulated camera, paced in real time.
-No inference component exists yet.
+**A detector has been selected but not yet converted or integrated**, so no
+inference component exists in the repository.
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
+Model choice and its input/output contract: [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md).
 
 ---
 
@@ -52,8 +54,8 @@ learning progress (§7) is tracked separately.
 
 - [x] **1. Define Use Case**
 - [x] **2. Collect or Simulate Video Input**
-- [ ] **3. Select Pretrained Model** ← next
-- [ ] **4. Optimize Model using TensorRT**
+- [x] **3. Select Pretrained Model**
+- [ ] **4. Optimize Model using TensorRT** ← next
 - [ ] **5. Build DeepStream Inference Pipeline**
 - [ ] **6. Containerize the Application**
 - [ ] **7. Deploy Inference with Triton Inference Server**
@@ -65,7 +67,7 @@ learning progress (§7) is tracked separately.
 |---|---|---|---|
 | 1 | Define Use Case | Complete | §5 below (no artifacts in this repo) |
 | 2 | Collect or Simulate Video Input | Complete | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md), [`docs/milestone-02-inspection.md`](docs/milestone-02-inspection.md) |
-| 3 | Select Pretrained Model | Not started | — |
+| 3 | Select Pretrained Model | Complete | [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md) |
 | 4 | Optimize Model using TensorRT | Not started | — |
 | 5 | Build DeepStream Inference Pipeline | Not started | — |
 | 6 | Containerize the Application | Not started | — |
@@ -78,14 +80,15 @@ learning progress (§7) is tracked separately.
 
 ## 4. Current milestone
 
-**None active.** Milestone 2 is complete; Milestone 3 has not been opened.
+**None active.** Milestone 3 is complete; Milestone 4 has not been opened.
 
-**Next up — Milestone 3: Select Pretrained Model.** Expected shape: choose a
-person-detection model, justify the choice against the use case, and document
-its input/output contract. No optimisation (M4) and no pipeline integration (M5).
+**Next up — Milestone 4: Optimize Model using TensorRT.** Expected shape: convert
+the selected ONNX into TensorRT engines and compare precisions on latency and
+throughput. The model ships an INT8 calibration cache, so the FP32/FP16/INT8
+trade-off is directly executable with no calibration dataset to assemble.
 
-Out of scope until explicitly opened: TensorRT conversion, `nvinfer`/`nvtracker`,
-Triton, Docker, MQTT, monitoring.
+Out of scope until explicitly opened: `nvinfer`/`nvtracker` integration, Triton,
+Docker, MQTT, monitoring.
 
 ---
 
@@ -117,6 +120,32 @@ Triton, Docker, MQTT, monitoring.
 Full record: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Inspection-phase record: [`docs/milestone-02-inspection.md`](docs/milestone-02-inspection.md).
 
+### Milestone 3 — Select Pretrained Model
+
+- Surveyed every locally installed detector, the TAO catalogue, and the YOLO
+  integration paths available in DeepStream 9.1
+- Selected **TrafficCamNet** (`resnet18_trafficcamnet_pruned.onnx`, DetectNet_v2,
+  pruned ResNet18) — chosen on **engineering suitability, not benchmark
+  accuracy**: already on disk, no download, no NGC credentials, no custom parser
+  to compile, no `sudo`, and `person` is a native output class
+- Documented the input/output contract by parsing the model, not by assumption:
+  in `input_1:0` `(-1,3,544,960)`; out `output_cov/Sigmoid:0` `(-1,4,34,60)` and
+  `output_bbox/BiasAdd:0` `(-1,16,34,60)`; opset 12; no plugins, no unsupported ops
+- **PeopleNet recorded as the upgrade target** — purpose-built for people and,
+  critically, the *same* DetectNet_v2 output contract, so switching is a config
+  change rather than an integration project. Blocked today: `nvcr.io` returns 401
+- Found that **YOLOv8/YOLO11 detection is not supported in DeepStream 9.1** — the
+  only YOLO11 parser shipped is oriented-bounding-box, which would mis-decode an
+  axis-aligned model
+- Found that **`nvinferserver` is unusable on this machine** (`libtritonserver.so`
+  absent, setup needs root) — a risk carried forward to M7
+- Recorded the counter-argument against the choice: TrafficCamNet's `person` class
+  was trained on traffic-camera viewpoints, while the default source is a
+  close-range indoor scene
+
+Full record: [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md).
+*Investigation milestone; no code produced.*
+
 ---
 
 ## 6. Future milestones
@@ -125,7 +154,6 @@ Deliberately thin — detail is added when a milestone is opened.
 
 | № | Milestone | Expected focus |
 |---|---|---|
-| 3 | Select Pretrained Model | Model choice and justification; input/output contract |
 | 4 | Optimize using TensorRT | FP16/INT8 conversion, accuracy vs latency trade-off |
 | 5 | Build DeepStream Inference Pipeline | `nvstreammux`, `nvinfer`, tracking, restricted-zone analytics |
 | 6 | Containerize the Application | Reproducible image for the Jetson target |
@@ -163,6 +191,16 @@ related but not identical.
 - [x] NVMM zero-copy memory
 - [x] Real-time pacing (clock sync and back-pressure)
 
+**From Milestone 3 — Select Pretrained Model**
+
+- [x] Model selection against engineering constraints, not leaderboards
+- [x] DetectNet_v2 architecture: dense grid regression, no anchors, no in-graph NMS
+- [x] Coverage vs bbox output heads; stride-16 grid; `bboxNorm` decode
+- [x] Why clustering (NMS/DBSCAN) is mandatory for this output shape
+- [x] Positional class↔channel mapping and its fragility
+- [x] Model formats `nvinfer` accepts; where custom bbox parsers are needed
+- [x] Reading an ONNX contract from the model rather than from documentation
+
 ---
 
 ## 8. Key engineering decisions
@@ -179,6 +217,9 @@ related but not identical.
 | Looping re-runs the pipeline, not a segment seek | Keeps the pipeline minimal and explainable; costs ~0.17 s per pass | 2 | Active |
 | Flat repository root | Avoids `video-surveillance/deepstream-video-surveillance/` nesting | 2 | Active |
 | All milestone documentation lives in `docs/`, named `milestone-NN-<topic>.md` | A root-level report per milestone does not scale; one predictable location and naming scheme | 2 | Active |
+| TrafficCamNet as the baseline detector | On disk, no download, no NGC credentials, no custom parser, no `sudo`; `person` is a native class | 3 | Active |
+| PeopleNet held as the upgrade target, not adopted now | Same DetectNet_v2 contract, so switching is a config change; blocked by NGC 401 | 3 | Active |
+| YOLOv8/YOLO11 rejected for this milestone | Not supported in DeepStream 9.1; needs an external repo, PyTorch and a compiled parser | 3 | Active |
 
 ---
 
@@ -199,8 +240,11 @@ Off the critical path; recorded so they do not become scope.
   segment-sync, `DISPLAY=:1`, `videorate` anomaly, SIGINT handling) currently live
   inside the Milestone 2 document. They will matter in later milestones. Promote
   them to a durable platform-notes file?
-- **Milestone 3 model choice** — which person-detection model, and evaluated against
-  what criteria?
+- ~~**Milestone 3 model choice**~~ — answered: TrafficCamNet, on engineering
+  suitability. See §5.
+- **Triton is unusable on this machine** — `libtritonserver.so` is absent and
+  `triton_backend_setup.sh` needs root. M7 assumes a capability that does not
+  currently exist. Resolve before opening M7.
 
 ---
 
