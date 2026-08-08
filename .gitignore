@@ -7,6 +7,13 @@ media/*.h264
 media/*.mkv
 media/*.avi
 
+# TensorRT engines and their build/benchmark artifacts are deliberately NOT
+# committed. An engine is a machine-specific binary: it is valid only for the
+# TensorRT version, GPU architecture and optimisation profile that built it, so
+# a committed engine would be unusable on any other machine and unverifiable on
+# this one. Regenerate with scripts/build_engines.sh. See models/README.md.
+models/engines/
+
 # Local scratch output
 *.log
 *.dot
