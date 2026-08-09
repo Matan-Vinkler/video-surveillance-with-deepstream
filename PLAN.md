@@ -28,28 +28,30 @@ Target end state, and where the work currently sits:
 
 ```
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
-   [DONE M2]      [DONE M3-M5.1]      [M5.2]         [M5.3]         [M9]
-       │                │                                            │
-  DeepStream:      TrafficCamNet FP16                           monitoring,
-  source ! decoder   TensorRT engine                            logging
-  ! nvstreammux      via nvinfer
+   [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]      [M5.3]         [M9]
+       │                │               │                            │
+  DeepStream:      TrafficCamNet FP16   NvSORT via              monitoring,
+  source ! decoder   TensorRT engine    nvtracker               logging
+  ! nvstreammux      via nvinfer        -> object_id
   ! nvinfer          -> NvDsObjectMeta
+  ! nvtracker
   ! nvmultistreamtiler
   ! nvdsosd ! sink
 ```
 
-Currently implemented: **video input through to visible person detection**. A
+Currently implemented: **video input through to tracked person detection**. A
 recorded video is replayed as a simulated camera (M2), TrafficCamNet was selected
-(M3) and optimised into TensorRT engines (M4), and the FP16 engine now runs on
-that source through `deepstream-app`, producing verified `person` metadata and
-on-screen bounding boxes (M5 checkpoint 1).
+(M3) and optimised into TensorRT engines (M4), the FP16 engine runs on that
+source through `deepstream-app` producing verified `person` metadata and
+on-screen bounding boxes (M5 checkpoint 1), and those detections now carry a
+persistent `object_id` (M5 checkpoint 2).
 
-Still missing: tracking (object identity across frames) and restricted-zone
-analytics — the remaining Milestone 5 checkpoints.
+Still missing: restricted-zone analytics — the last Milestone 5 checkpoint.
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
 Inference pipeline: [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md).
+Tracking: [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md).
 
 ---
 
@@ -86,12 +88,12 @@ learning progress (§7) is tracked separately.
 
 ## 4. Current milestone
 
-**Milestone 5 is active. Checkpoint 1 of 3 is complete.**
+**Milestone 5 is active. Checkpoints 1 and 2 of 3 are complete.**
 
 | # | Checkpoint | Status |
 |---|---|---|
 | 5.1 | Inference pipeline producing visible person detections | **Complete** |
-| 5.2 | Tracking (`nvtracker`) — object identity across frames | Not started |
+| 5.2 | Tracking (`nvtracker`) — object identity across frames | **Complete** |
 | 5.3 | Restricted-zone analytics (`nvdsanalytics`) | Not started |
 
 **Checkpoint 1 delivered:** `deepstream-app` running the FP16 engine on
@@ -100,19 +102,36 @@ and visible bounding boxes. Verified headlessly against detection metadata, not
 appearance. Full record:
 [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md).
 
-**Next — checkpoint 2: tracking.** Add `nvtracker` so detections acquire a
-persistent `object_id`. That identity is a prerequisite for zone logic: "a person
-entered the zone" is a statement about one tracked object over time, not about
-independent per-frame detections.
+**Checkpoint 2 delivered:** `nvtracker` running NVIDIA's NvSORT configuration,
+used exactly as installed. Every one of the 230 detected frames carries a tracked
+object with a valid `object_id`; one track holds for **224 consecutive frames**
+with **zero mid-track ID switches**. Detection is provably unchanged — a control
+run with the tracker disabled differs on 0 of 288 frames. Full record:
+[`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md).
 
-Carried forward into the remaining checkpoints:
+Two things checkpoint 2 deliberately did *not* claim: the clip has **no interior
+detector gaps**, so gap bridging, shadow tracking and occlusion recovery were
+recorded as **NOT EXERCISED**; and the single ID change that did occur, in the
+first six frames as the person enters at the image border, is characterised but
+**not explained** — nothing was tuned around it.
+
+**Next — checkpoint 3: restricted-zone analytics.** Add `nvdsanalytics` so a
+tracked identity becomes a zone statement: "this person entered the restricted
+area and stayed", which is a claim about one `object_id` over time.
+
+Carried forward into the remaining checkpoint:
 
 - **FP16 remains the default.** INT8 stays available if the added stages consume
   enough of the 33.37 ms frame budget to justify revisiting it.
 - **The 1x1 tiler is load-bearing**, not decoration — removing it reintroduces the
   OSD trail ([detail](docs/milestone-05-osd-ghosting.md)).
+- **A bad `ll-config-file` fails silently.** DeepStream warns and falls back to
+  tracker defaults, so a typo would substitute a different backend without any
+  error. The verification guards it; DeepStream does not
+  ([detail](docs/milestone-05-tracking.md) §7).
 - **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine in
-  isolation. Worth measuring once tracking and analytics are in.
+  isolation. Worth measuring once analytics is in — and now that a tracker is in
+  the path, it is no longer only an inference cost.
 
 Out of scope until explicitly opened: Triton, Docker, MQTT, monitoring.
 
@@ -274,6 +293,29 @@ related but not identical.
       produces rendering artifacts
 - [x] That metadata-level tests can pass while rendered output is visibly wrong
 
+**From Milestone 5 — Tracking (checkpoint 2)**
+
+- [x] DeepStream 9.1 ships one tracker library; the backend is chosen entirely
+      by the YAML given to `ll-config-file`
+- [x] IOU vs NvSORT vs NvDCF: motion model, appearance model, and what each
+      actually costs
+- [x] Which backends need assets that are not installed (ReID, SAM2), and how to
+      establish that before choosing one
+- [x] `object_id`, `UNTRACKED_OBJECT_ID`, and `tracker_bbox_info` vs
+      `detector_bbox_info`
+- [x] `probationAge`, `maxShadowTrackingAge`, `earlyTerminationAge` — and that a
+      probational target is still emitted into `NvDsObjectMeta`
+- [x] That `deepstream-app` attaches four different KITTI probes at four
+      different points, which is what lets one run compare pre- and post-tracker
+      metadata
+- [x] Designing a tracking criterion that distinguishes track *establishment*
+      from a mid-track ID switch, instead of a coverage percentage
+- [x] Reporting untested capabilities as NOT EXERCISED rather than as passing
+- [x] That a missing `ll-config-file` only warns — a silent backend substitution,
+      and why the verification asserts the *absence* of a warning
+- [x] That obsolete config keys (`enable-batch-process`, `enable-past-frame`) are
+      silently ignored rather than rejected
+
 ---
 
 ## 8. Key engineering decisions
@@ -309,6 +351,10 @@ related but not identical.
 | Detections verified from KITTI metadata, never from appearance | "I saw a box" is not evidence; the dump gives per-frame, per-class counts | 5 | Active |
 | **A 1x1 `nvmultistreamtiler` in the display path** | Without a fresh buffer upstream, `nvdsosd` draws in place and previous frames' boxes persist as a trail. The tiler fixes it while keeping the GPU draw path; matches all 21 stock NVIDIA configs ([detail](docs/milestone-05-osd-ghosting.md)) | 5 | Active |
 | OSD left in GPU mode, CPU mode rejected | CPU mode also removed the trail, but only as a side effect of forcing an RGBA conversion. Adopting it would have meant fixing the symptom for the wrong reason | 5 | Active |
+| **NvSORT as the tracker**, not IOU or NvDCF | IOU is simpler but has no state estimator at all — a missed detection freezes its box and it offers no velocity to zone analytics. NvDCF is NVIDIA's default but is the most expensive, and its distinguishing benefit (visual re-association through occlusion) is untestable on a clip with one never-occluded person ([detail](docs/milestone-05-tracking.md) §3) | 5 | Active |
+| NVIDIA's tracker YAML referenced in place, never copied | Copying would silently fork a vendor file that can drift. The repository preflight-checks the path instead | 5 | Active |
+| Tracking criterion is "zero mid-track ID switches", not a coverage percentage | A percentage cannot separate a track that settles after a few frames from one that breaks mid-clip. Only the second breaks zone logic. Unique-ID count and coverage are reported as metrics | 5 | Active |
+| Untested tracker capabilities recorded as NOT EXERCISED | The clip has no interior detector gaps and no occlusion, so gap bridging and re-association were never invoked. A passing run must not be read as evidence for them | 5 | Active |
 
 ---
 
@@ -347,8 +393,22 @@ Off the critical path; recorded so they do not become scope.
   ([detail](docs/milestone-05-osd-ghosting.md) §8). The fix does not depend on the
   answer. Worth closing only if the artifact reappears in another topology.
 - **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine
-  alone; the assembled pipeline has no performance figure. Measure once tracking
-  and analytics are in, rather than twice.
+  alone; the assembled pipeline has no performance figure, and it now contains a
+  tracker as well. Measure once analytics is in, rather than twice.
+- **Why the entering track changed ID once** — measured and characterised, not
+  explained. A border-clipped box grows fast enough that NvSORT's association
+  plausibly fails while the target is still probational, but the low-level
+  library's association scores were not instrumented and the vendor YAML is used
+  unmodified by design ([detail](docs/milestone-05-tracking.md) §11). Revisit if
+  entry-time ID churn interferes with checkpoint 3's zone logic.
+- **Tracking capabilities that this clip cannot test** — gap bridging, shadow
+  tracking, occlusion recovery, track termination and multi-object association
+  were all recorded as NOT EXERCISED ([detail](docs/milestone-05-tracking.md) §6).
+  Testing them needs the crowded source or a real camera. Open a separate
+  experiment, or accept the gap until the input changes?
+- **IOU was never run head to head.** NvSORT was chosen from the shipped
+  configurations rather than from a measurement on this clip. The comparison is a
+  one-line config change if the choice is ever questioned.
 
 ---
 
@@ -361,3 +421,5 @@ Off the critical path; recorded so they do not become scope.
 | No labelled ground truth for any sample clip | Medium — caps quality work at "divergence from FP32", never "correctness" | When detection accuracy must be claimed rather than compared |
 | Detection counts vary ~1% between identical runs | Low — two frames of 288 differ by one borderline detection; verification asserts `> 0`, not an exact count | If reproducible counts ever become a requirement |
 | Rendering correctness needs a human | Medium — the automated suite passed while output was visibly wrong. No headless check covers OSD drawing | If visible regressions recur; would need frame capture and comparison |
+| A bad `ll-config-file` silently substitutes a different tracker backend | Medium — DeepStream only warns and falls back to defaults, so every other check would still pass. Guarded by asserting the warning is absent ([detail](docs/milestone-05-tracking.md) §7) | If more vendor configs are referenced by path; the same guard would be needed per file |
+| The `[tracker]` group is duplicated across two app configs | Low — `deepstream-app` has no include mechanism, and keeping the two configs readable side by side was judged worth the duplication | If a third app config appears, or the groups drift |

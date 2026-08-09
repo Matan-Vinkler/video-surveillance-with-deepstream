@@ -12,12 +12,18 @@ sample_walk.mov → decoder → nvstreammux → nvinfer → nvmultistreamtiler
 **Status: complete.** Headless verification passes and on-screen rendering is
 confirmed (§7).
 
+> **Amended by checkpoint 2.** `nvtracker` now sits between `nvinfer` and the
+> tiler, and CHECK 8 below was narrowed from "no tracker *or* analytics" to
+> "no analytics" — see §11. Everything else in this document still describes
+> behaviour that is re-verified on every run.
+
 The `nvmultistreamtiler` stage was **not** in the originally specified topology.
 It was added after visible playback exposed a rendering defect, and it is
 required for correct OSD output even with a single source. The full experiment
 is in [`milestone-05-osd-ghosting.md`](milestone-05-osd-ghosting.md).
 
-No tracker, no analytics, no Triton, no container. No engine was built.
+No analytics, no Triton, no container. No engine was built. A tracker was out of
+scope for this checkpoint and was added by the next one (§11).
 
 Inspection-phase record: [`milestone-05-inspection.md`](milestone-05-inspection.md).
 
@@ -123,10 +129,14 @@ recorded at these settings before any tuning was considered — and none was don
   surviving detections     230
   non-person survivors     0
   PASS  with classes 0,1,3 filtered out, every surviving detection is 'person' -> class_id 2
-== CHECK 8: no tracker or analytics yet ==
-  PASS  no tracker, secondary-gie or analytics group in any config
-  PASS  no tracker or analytics element appeared at runtime
+== CHECK 8: no analytics yet (checkpoint 3 not started) ==
+  PASS  no analytics or secondary-gie group in any config
+  PASS  no analytics element appeared at runtime
 ```
+
+*(CHECK 8 originally read "no tracker or analytics". It was narrowed in
+checkpoint 2, which adds a tracker deliberately; §11 records why and what was
+preserved. The output above is from a re-run after that change.)*
 
 ### Detection quality on this clip
 
@@ -280,7 +290,40 @@ an exact count. An exact-count assertion would be flaky by roughly 1%.
 | Machine-verifiable object metadata | Done — KITTI dump, not "I saw a box" |
 | At least one detection with class_id 2 | Done — proven by `filter-out-class-ids` |
 | Headless execution exits cleanly | Done — exit 0, no display, no loop |
-| No tracker or analytics metadata | Done — static and runtime checks |
+| No analytics metadata | Done — static and runtime checks (narrowed in checkpoint 2, §11) |
 | Milestone 2 tests still pass | Done — `verify_simulated_stream.sh` exit 0, M2 files byte-identical |
 | Bounding boxes visible with OSD | Done — confirmed on screen after adding the 1x1 tiler (§7) |
 | Rendering defect understood and documented | Done — variable isolated; mechanism recorded as hypothesis only |
+
+## 11. Amended by checkpoint 2
+
+Checkpoint 2 inserts `nvtracker` between `nvinfer` and the tiler. That
+invalidated exactly one thing here, deliberately.
+
+**CHECK 8 was narrowed.** It originally asserted that neither a tracker nor
+analytics existed:
+
+```bash
+grep -rqE '^\[tracker\]|^\[secondary-gie|nvdsanalytics|kitti-track-output-dir' "$CONFIG_DIR"/
+```
+
+Adding a tracker makes that fail by construction, so it now asserts only that
+**analytics** are absent:
+
+```bash
+grep -rqE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/
+```
+
+The intent is unchanged — checkpoint 3 has not started — and the checkpoint-1
+claim that mattered is untouched. **What this document owns is detection**, and
+CHECKS 1–7 read only the pre-tracker detector dump, which `deepstream-app`
+writes from a probe on the `primary-gie` bin's src pad. Checkpoint 2 proves that
+independently: a control run with `[tracker] enable=0` produced a detector dump
+in which **0 of 288 per-frame files differ**.
+
+Nothing else changed. The topology in §1, the omissions in §3, the class-mapping
+experiment in §5, the negative cases in §6, the ghosting fix in §7 and the
+reproducibility finding in §8 all still hold and are still re-verified on every
+run of `verify_inference.sh`.
+
+The tracking record is [`milestone-05-tracking.md`](milestone-05-tracking.md).

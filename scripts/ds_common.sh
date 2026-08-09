@@ -17,7 +17,19 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/trt_common.sh"
 
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/configs}"
+
+# Metadata dumps. deepstream-app writes these from FOUR DIFFERENT probes, at
+# different points in the pipeline -- which is what makes it possible to compare
+# detector output against tracker output from a single run:
+#
+#   DETECTION_DIR   gie-kitti-output-dir        primary-gie src pad  (pre-tracker)
+#   TRACK_DIR       kitti-track-output-dir      tracker src pad      (post-tracker)
+#   TERMINATED_DIR  terminated-track-output-dir tracker src pad
+#   SHADOW_DIR      shadow-track-output-dir     tracker src pad
 DETECTION_DIR="${DETECTION_DIR:-$REPO_ROOT/models/detections}"
+TRACK_DIR="${TRACK_DIR:-$REPO_ROOT/models/tracks}"
+TERMINATED_DIR="${TERMINATED_DIR:-$REPO_ROOT/models/tracks_terminated}"
+SHADOW_DIR="${SHADOW_DIR:-$REPO_ROOT/models/tracks_shadow}"
 
 # The committed nvinfer config references a version-free engine name, so that no
 # TensorRT version or GPU name is hard-coded in a checked-in file. The wrapper
@@ -31,6 +43,41 @@ require_deepstream_app() {
     command -v deepstream-app >/dev/null 2>&1 \
         || die "'deepstream-app' is not in PATH.
        It ships with DeepStream, normally at $(ds_root)/bin/deepstream-app."
+}
+
+# --------------------------------------------------------------- tracker ----
+# Checkpoint 2 uses NVIDIA's tracker exactly as installed: one shared low-level
+# library, and a vendor YAML that selects NvSORT. Neither is copied into this
+# repository and neither is modified -- so both are discovered through the
+# unversioned DeepStream symlink and checked before any pipeline is started.
+# A missing asset must fail here with a readable message, not deep inside the
+# low-level library at runtime.
+tracker_lib() { printf '%s\n' "$(ds_root)/lib/libnvds_nvmultiobjecttracker.so"; }
+tracker_config() {
+    printf '%s\n' "$(ds_root)/samples/configs/deepstream-app/config_tracker_NvSORT.yml"
+}
+
+require_tracker_assets() {
+    # `die` inside $( ) only ends the subshell, and callers may invoke this with
+    # `set -e` suspended -- so each lookup is guarded explicitly. This is the
+    # same trap that bit model_contract() in Milestone 4.
+    local lib cfg
+    lib="$(tracker_lib)" || return 1
+    cfg="$(tracker_config)" || return 1
+    [[ -n "$lib" && -n "$cfg" ]] \
+        || die "DeepStream could not be located, so the tracker assets cannot be checked."
+    [[ -r "$lib" ]] || die "The DeepStream low-level tracker library is missing or unreadable:
+           $lib
+
+       DeepStream 9.x ships one tracker library for every backend; without it
+       no tracker can be instantiated at all. Nothing in this repository builds
+       or installs it."
+    [[ -r "$cfg" ]] || die "NVIDIA's NvSORT tracker configuration is missing or unreadable:
+           $cfg
+
+       This milestone uses the vendor YAML as shipped and never copies or
+       modifies it. Present in that directory:
+$(ls -1 "$(dirname "$cfg")"/config_tracker_*.yml 2>/dev/null | sed 's|^|           |' || echo '           (none)')"
 }
 
 expected_fp16_engine() {
@@ -109,8 +156,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     printf '  %-24s %s\n' "DeepStream" "$(ds_version)"
 
     bold "== Required elements =="
-    require_elements nvstreammux nvinfer nvvideoconvert nvdsosd nv3dsink fakesink
+    require_elements nvstreammux nvinfer nvtracker nvmultistreamtiler \
+                     nvvideoconvert nvdsosd nv3dsink fakesink
     printf '  %-24s %s\n' "pipeline elements" "all present"
+
+    bold "== Tracker assets (vendor, read-only) =="
+    require_tracker_assets
+    printf '  %-24s %s\n' "low-level library" "$(tracker_lib)"
+    printf '  %-24s %s\n' "NvSORT config" "$(tracker_config)"
 
     bold "== Engine =="
     resolved="$(ensure_engine_link)"

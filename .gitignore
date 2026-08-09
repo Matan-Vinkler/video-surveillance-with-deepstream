@@ -27,6 +27,13 @@ models/engines/
 *.swp
 .DS_Store
 
-# Per-frame detection metadata (KITTI dump) written by the Milestone 5
-# verification run. Regenerated on every run; never committed.
+# Per-frame KITTI metadata written by the Milestone 5 verification runs -- the
+# detector dump and the three tracker dumps. Regenerated on every run; never
+# committed.
 models/detections/
+models/tracks/
+models/tracks_terminated/
+models/tracks_shadow/
+
+# Python bytecode cache from scripts/analyze_tracks.py
+__pycache__/

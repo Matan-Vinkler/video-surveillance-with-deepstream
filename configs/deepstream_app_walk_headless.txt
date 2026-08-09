@@ -1,22 +1,42 @@
-# deepstream-app: HEADLESS verification pipeline, Milestone 5 checkpoint 1.
+# deepstream-app: HEADLESS verification pipeline, Milestone 5 checkpoints 1-2.
 #
-#   file source -> decoder -> nvstreammux -> nvinfer -> nvmultistreamtiler
-#                -> nvdsosd -> fakesink
+#   file source -> decoder -> nvstreammux -> nvinfer -> nvtracker
+#                -> nvmultistreamtiler -> nvdsosd -> fakesink
 #
-# No tracker, no analytics, no secondary inference. Bounded: one pass of a
-# 9.61 s clip to natural EOS, never looping.
+# No analytics, no secondary inference. Bounded: one pass of a 9.61 s clip to
+# natural EOS, never looping.
 #
 # Paths are resolved relative to THIS file's directory.
 
 [application]
 enable-perf-measurement=1
 perf-measurement-interval-sec=5
-# Per-frame detection metadata in KITTI format, written from a probe on the
-# nvdsosd sink pad -- i.e. AFTER nvinfer and BEFORE any tracker. This is the
-# machine-readable evidence that object metadata is really being produced.
-# One file per frame: <appIdx>_<streamId>_<frameNum>.txt
-# The directory must already exist; scripts/verify_inference.sh creates it.
+
+# Four KITTI metadata dumps, written by FOUR DIFFERENT probes at different
+# points in the pipeline. That is what makes it possible to compare detector
+# output against tracker output from a SINGLE run.
+#
+# One file per frame in each directory: <appIdx>_<streamId>_<frameNum>.txt
+# The directories must already exist; the verification scripts create them.
+
+# DETECTOR output. Written from a probe on the PRIMARY-GIE bin's src pad
+# (deepstream_app.c:1951), i.e. after nvinfer and strictly before the tracker,
+# so adding a tracker cannot change what lands here. No object_id column.
+#   label 0.0 0 0.0 left top right bottom 0.0 x6 confidence
 gie-kitti-output-dir=../models/detections
+
+# TRACKER output. Written from a probe on the src pad of the last common
+# element (deepstream_app.c:1979) -- the tracker, once one exists. Same format
+# plus the tracking id in column 2, the tracker's box, and tracker confidence.
+#   label id 0.0 0 0.0 left top right bottom 0.0 x7 confidence
+kitti-track-output-dir=../models/tracks
+
+# Tracks the low-level library reports as terminated, and frames it reports as
+# shadow-tracked (a target kept alive while the detector did not see it).
+# Both are evidence for behaviour that CANNOT be assumed; see
+# docs/milestone-05-tracking.md.
+terminated-track-output-dir=../models/tracks_terminated
+shadow-track-output-dir=../models/tracks_shadow
 
 # A 1x1 tiler. Not needed to *tile* anything -- there is one source -- but
 # required for correct OSD rendering. Without it, nvdsosd draws into a buffer it
@@ -90,6 +110,39 @@ bbox-border-color0=1;0;0;1
 bbox-border-color1=0;1;1;1
 bbox-border-color2=0;0;1;1
 bbox-border-color3=0;1;0;1
+
+# Milestone 5 checkpoint 2. deepstream-app places the tracker immediately after
+# the primary GIE and before the tiler; that ordering is built into
+# create_common_elements() and is not configurable:
+#
+#   nvstreammux -> nvinfer -> nvtracker -> nvmultistreamtiler -> nvdsosd -> sink
+#
+# DeepStream 9.1 ships ONE low-level tracker library for every backend; the
+# backend is chosen entirely by the YAML given to ll-config-file. Both are
+# NVIDIA's own files, referenced through the unversioned /opt symlink and used
+# exactly as installed -- neither is copied into this repository nor modified.
+# scripts/ds_common.sh preflight-checks that both exist.
+#
+# NvSORT = Kalman motion model + IoU/size association, no appearance model and
+# no ReID network, so nothing has to be downloaded or built. Why NvSORT rather
+# than IOU or NvDCF: docs/milestone-05-tracking.md
+#
+# NOTE: enable-batch-process and enable-past-frame DO NOT EXIST in DeepStream
+# 9.1 -- they are absent from both the element and the config parser, and would
+# be silently ignored. Batching is unconditional; past-frame output is decided
+# by the low-level library's capability query.
+[tracker]
+enable=1
+# The tracker's own working resolution. It matches neither the source nor the
+# network by requirement: bbox coordinates in metadata stay in streammux
+# (1920x1080) coordinates. 960x544 is the element default and NVIDIA's sample
+# value; NvDCF/NvDeepSORT additionally require multiples of 32.
+tracker-width=960
+tracker-height=544
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml
+gpu-id=0
+display-tracking-id=1
 
 # Never loop: verification must terminate on its own.
 [tests]

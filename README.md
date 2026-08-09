@@ -1,12 +1,14 @@
 # Video Surveillance with DeepStream
 
-**Real-time person detection on an NVIDIA Jetson Orin Nano**, built from GStreamer,
-TensorRT and DeepStream.
+**Real-time person detection and tracking on an NVIDIA Jetson Orin Nano**, built
+from GStreamer, TensorRT and DeepStream.
 
 A recorded video is replayed as a simulated camera — paced in real time, not
 consumed as fast as the hardware allows — and every frame is run through a
-TensorRT-optimised person detector. Detections are drawn on screen and exposed as
-structured metadata, so results can be checked by a machine rather than by eye.
+TensorRT-optimised person detector. Each detected person is then given a
+persistent identity that survives from frame to frame. Results are drawn on
+screen and exposed as structured metadata, so they can be checked by a machine
+rather than by eye.
 
 Everything runs on the device. Nothing is downloaded at run time, no model is
 trained, and no cloud service is involved.
@@ -21,13 +23,16 @@ flowchart LR
     B["nvv4l2decoder<br/>NVDEC hardware decode"]
     C["nvstreammux<br/>batch = 1"]
     D["nvinfer<br/>TrafficCamNet FP16"]
-    E["nvmultistreamtiler<br/>1x1"]
-    F["nvdsosd<br/>draws boxes + labels"]
-    G["nv3dsink<br/>or fakesink, headless"]
-    H["per-frame metadata dump<br/>class, confidence, box"]
+    E["nvtracker<br/>NvSORT"]
+    F["nvmultistreamtiler<br/>1x1"]
+    G["nvdsosd<br/>boxes, labels, track ids"]
+    H["nv3dsink<br/>or fakesink, headless"]
+    I["detector dump<br/>class, confidence, box"]
+    J["tracker dump<br/>+ object_id"]
 
-    A --> B --> C --> D --> E --> F --> G
-    D -. "NvDsObjectMeta" .-> H
+    A --> B --> C --> D --> E --> F --> G --> H
+    D -. "NvDsObjectMeta" .-> I
+    E -. "+ object_id" .-> J
 ```
 
 Frames stay in NVMM (NVIDIA hardware memory) from decode to display, so there is
@@ -38,15 +43,18 @@ no copy into system memory anywhere in the path.
 - **Simulates a camera** from a recorded clip, paced by the pipeline clock so it
   behaves like a live 30 fps source rather than a file being read at full speed.
 - **Detects people** with TrafficCamNet, running as a TensorRT engine on the GPU.
-- **Draws bounding boxes and labels** on screen, colour-coded per class.
-- **Emits per-frame detection metadata** — class, confidence and box coordinates —
-  so correctness is asserted from data, never from "it looked right".
-- **Verifies itself headlessly**: one command runs the whole pipeline with no
-  display, checks eight properties of the result, and exits non-zero on failure.
+- **Tracks each person across frames** with NvSORT, so a detection becomes an
+  identity — the prerequisite for saying "*this* person entered the zone".
+- **Draws bounding boxes, labels and track IDs** on screen, colour-coded per class.
+- **Emits per-frame metadata twice** — once from the detector and once from the
+  tracker — so correctness is asserted from data, never from "it looked right".
+- **Verifies itself headlessly**: two commands run the whole pipeline with no
+  display, check seventeen properties of the result, and exit non-zero on failure.
 
 ## Results
 
-Detection on the default clip, at the model's stock reference thresholds:
+Detection and tracking on the default clip, at the model's stock reference
+thresholds and NVIDIA's stock NvSORT configuration:
 
 | | |
 |---|---|
@@ -54,6 +62,15 @@ Detection on the default clip, at the model's stock reference thresholds:
 | `person` detections | **230**, across 230 frames (79.9%) |
 | False positives | **zero** `car`, `bicycle` or `road_sign` in 288 frames |
 | Confidence on the subject | 0.67 – 0.82 |
+| Frames with a tracked person | **230 of 230** — every detection got an identity |
+| Longest continuous track | **224 frames** (50 → 273), one unbroken ID |
+| Mid-track ID switches | **zero** |
+| Unique track IDs | 2 — one ID change, in the first 6 frames as the person enters |
+
+The tracker is not credited with what this clip cannot test. There are **no
+interior detector gaps**, so gap bridging, shadow tracking and occlusion recovery
+were never invoked and are recorded as
+[NOT EXERCISED](docs/milestone-05-tracking.md) rather than as passing.
 
 Inference cost, measured per precision at batch 1, 960×544 (3 interleaved
 repetitions each):
@@ -79,12 +96,13 @@ FP16 is the default; INT8 is built and benchmarked but held in reserve.
   L4T R39.2, Ubuntu 24.04, DeepStream 9.1.0, TensorRT 10.16.2, CUDA 13.2.
 - **GStreamer 1.x** with `gst-launch-1.0`, `gst-inspect-1.0`, `gst-discoverer-1.0`.
 - **NVIDIA GStreamer elements**: `nvv4l2decoder`, `nvstreammux`, `nvinfer`,
-  `nvmultistreamtiler`, `nvdsosd`, `nv3dsink`.
+  `nvtracker`, `nvmultistreamtiler`, `nvdsosd`, `nv3dsink`.
 - A display, **only** for the visible playback commands. Everything else runs
   headlessly.
 
-Nothing needs to be installed or downloaded. The model, the calibration data and
-the sample video all ship with DeepStream and are read from their install path.
+Nothing needs to be installed or downloaded. The model, the calibration data, the
+tracker library, the tracker configuration and the sample video all ship with
+DeepStream and are read from their install path.
 The DeepStream version is discovered at run time through the
 `/opt/nvidia/deepstream/deepstream` symlink, so no version is hard-coded anywhere.
 
@@ -98,9 +116,10 @@ The DeepStream version is discovered at run time through the
 # 2. Build the TensorRT engines (~4.5 min; one-off)
 ./scripts/build_engines.sh --precision all
 
-# 3. Run detection and verify it, headlessly
+# 3. Run detection and tracking, and verify both headlessly
 ./scripts/ds_common.sh --selftest
-./scripts/verify_inference.sh
+./scripts/verify_inference.sh       # detection
+./scripts/verify_tracking.sh        # identity across frames
 
 # 4. Watch it, if a display is attached
 ./scripts/run_inference.sh
@@ -117,12 +136,13 @@ The window opens on the physically attached monitor, not in an SSH client.
 
 ## Usage
 
-**Inference**
+**Inference and tracking**
 
 | Command | What it does |
 |---|---|
-| `./scripts/run_inference.sh` | Visible detection with bounding boxes, paced in real time |
-| `./scripts/verify_inference.sh` | Headless run with eight machine-checked assertions |
+| `./scripts/run_inference.sh` | Visible detection and tracking with boxes and IDs, paced in real time |
+| `./scripts/verify_inference.sh` | Headless detection run with eight machine-checked assertions |
+| `./scripts/verify_tracking.sh` | Headless tracking run: four pipelines, nine checks, and a full identity report |
 
 **Model and engines**
 
@@ -176,9 +196,23 @@ the OSD draws in place and previous frames' boxes persist as a visible trail.
 [Full detail →](docs/milestone-05-inference-pipeline.md) ·
 [the ghosting investigation →](docs/milestone-05-osd-ghosting.md)
 
+**Tracking.** DeepStream 9.1 ships a single tracker library; the backend is
+chosen entirely by the YAML handed to it. NvSORT was picked over the simpler IOU
+tracker because IOU has no motion model at all, and over NVIDIA's default NvDCF
+because NvDCF's appearance matching cannot be tested on a clip with one person
+who is never occluded. NVIDIA's configuration is used exactly as installed.
+Identity is asserted from the tracker's own metadata dump: the criterion is zero
+ID switches *mid-track*, not a coverage percentage, because only a break in the
+middle of a trajectory would defeat zone logic.
+[Full detail →](docs/milestone-05-tracking.md)
+
 ## Verification
 
-`./scripts/verify_inference.sh` runs the full pipeline headlessly and asserts:
+Two headless suites. Neither needs a display, both terminate on their own, and
+both exit non-zero on any failure. All evidence comes from per-frame metadata
+dumps, so a passing run is a statement about data rather than about appearance.
+
+**`./scripts/verify_inference.sh` — detection**
 
 1. The application runs to a clean end of stream.
 2. The prebuilt engine was **deserialized, not rebuilt** — checked in the log and
@@ -189,11 +223,29 @@ the OSD draws in place and previous frames' boxes persist as a visible trail.
 6. `person` detections exist, with raw per-class counts reported.
 7. `class_id 2` really is `person` — proven by re-running with the other classes
    filtered out, so anything surviving is class 2 by construction.
-8. No tracker or analytics metadata exists.
+8. No analytics metadata exists.
 
-It needs no display, terminates on its own, and exits non-zero on any failure.
-Detection evidence comes from a per-frame metadata dump, so a passing run is a
-statement about data rather than about appearance.
+**`./scripts/verify_tracking.sh` — identity.** Four pipeline runs, nine checks:
+
+1. Clean end of stream.
+2. `nvtracker` is genuinely instantiated, and no obsolete config keys are used.
+3. The engine is still deserialized, not rebuilt.
+4. Both the detector and tracker dumps cover all 288 frames.
+5. **The tracker did not change detection** — a control run with the tracker
+   disabled produces a detector dump differing on 0 of 288 frames.
+6. Every tracked object carries a valid `object_id`, never `UNTRACKED_OBJECT_ID`.
+7. **Zero mid-track ID switches** while the detector observes the person
+   continuously. Unique IDs and dominant-ID coverage are reported as metrics, not
+   as the criterion.
+8. A missing tracker **library** is fatal, a missing tracker **config** is not —
+   DeepStream silently falls back to defaults, so the real run is checked for the
+   absence of that warning. Otherwise a typo would substitute a different tracker
+   and every other check would still pass.
+9. No analytics yet.
+
+It also prints a full identity report: per-track lifespans, the longest
+continuous track, when the track was established, and an explicit list of the
+capabilities this clip did **not** exercise.
 
 ## Project structure
 
@@ -214,6 +266,7 @@ statement about data rather than about appearance.
 | TensorRT optimisation and benchmarks | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md) |
 | Inference pipeline | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md) |
 | The OSD ghosting investigation | [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md) |
+| Object tracking | [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md) |
 | Engineering roadmap and decisions | [`PLAN.md`](PLAN.md) |
 
 Each document records not just what was built but **why**, along with the
@@ -221,13 +274,16 @@ verification evidence and an explicit statement of what remains unproven.
 
 ## Roadmap
 
-Person detection works end to end. Object tracking and restricted-zone analytics
-are next, followed by containerisation and deployment — see [`PLAN.md`](PLAN.md).
+Person detection and tracking work end to end. Restricted-zone analytics is next,
+followed by containerisation and deployment — see [`PLAN.md`](PLAN.md).
 
 ## Third-party assets
 
-The detection model, its INT8 calibration cache, and the sample videos are
-**NVIDIA DeepStream SDK assets**, read from their install path on the target
-machine and never redistributed here. They are covered by the DeepStream SDK
+The detection model, its INT8 calibration cache, the low-level tracker library,
+the NvSORT tracker configuration and the sample videos are **NVIDIA DeepStream
+SDK assets**, read from their install path on the target machine and never
+redistributed here. The tracker configuration in particular is referenced in
+place and used unmodified — copying it into this repository would silently fork a
+vendor file that can drift. They are covered by the DeepStream SDK
 licence, not by this project. See [`media/README.md`](media/README.md) and
 [`models/README.md`](models/README.md).

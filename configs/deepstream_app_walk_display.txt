@@ -1,13 +1,14 @@
-# deepstream-app: VISIBLE playback pipeline, Milestone 5 checkpoint 1.
+# deepstream-app: VISIBLE playback pipeline, Milestone 5 checkpoints 1-2.
 #
-#   file source -> decoder -> nvstreammux -> nvinfer -> nvmultistreamtiler
-#                -> nvdsosd -> nv3dsink
+#   file source -> decoder -> nvstreammux -> nvinfer -> nvtracker
+#                -> nvmultistreamtiler -> nvdsosd -> nv3dsink
 #
-# Identical to deepstream_app_walk_headless.txt except for the sink and pacing.
-# This opens a window on the physically attached monitor. Run it through
-# scripts/run_inference.sh, which checks for a usable display first.
+# Identical to deepstream_app_walk_headless.txt except for the sink, the pacing
+# and the metadata dumps (this config writes none). This opens a window on the
+# physically attached monitor. Run it through scripts/run_inference.sh, which
+# checks for a usable display first.
 #
-# No tracker, no analytics, no secondary inference.
+# No analytics, no secondary inference.
 
 [application]
 enable-perf-measurement=1
@@ -79,6 +80,21 @@ bbox-border-color0=1;0;0;1
 bbox-border-color1=0;1;1;1
 bbox-border-color2=0;0;1;1
 bbox-border-color3=0;1;0;1
+
+# Milestone 5 checkpoint 2 -- identical to the [tracker] group in
+# deepstream_app_walk_headless.txt. Kept spelled out rather than shared: these
+# two configs are meant to be readable side by side, and deepstream-app has no
+# include mechanism. display-tracking-id=1 makes nvdsosd append the tracking id
+# to each label, which is the on-screen evidence for this checkpoint.
+# Rationale and the DeepStream 9.1 key set: docs/milestone-05-tracking.md
+[tracker]
+enable=1
+tracker-width=960
+tracker-height=544
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml
+gpu-id=0
+display-tracking-id=1
 
 [tests]
 file-loop=0

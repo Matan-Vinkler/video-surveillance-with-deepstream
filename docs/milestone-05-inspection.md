@@ -168,3 +168,15 @@ reproducible.** Three identical headless runs produced 232, 230 and 230 person
 detections. The variation is confined to two frames and one borderline
 detection. This was not predicted by any risk above and is documented in the
 implementation record rather than smoothed over.
+
+**4. §6 named the wrong probe.** The KITTI detection dump is *not* written from
+a probe on the `nvdsosd` sink pad. `write_kitti_output` is called by
+`gie_primary_processing_done_buf_prob`, which `deepstream-app` attaches to the
+**`primary-gie` bin's src pad** (`deepstream_app.c:1951-1954`). The consequence
+claimed in §6 — that the dump is taken after `nvinfer` and before any tracker —
+is correct, and checkpoint 2 shows it is load-bearing: the tracker's own dump
+comes from a *different* probe on a *different* pad
+(`kitti-track-output-dir`, attached at `deepstream_app.c:1979-1981`), which is
+what allows detector and tracker output to be compared within one run. Found
+during checkpoint 2; see
+[`milestone-05-tracking.md`](milestone-05-tracking.md) §9.

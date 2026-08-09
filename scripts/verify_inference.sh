@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # verify_inference.sh - headless, machine-checked verification of the Milestone 5
-# checkpoint-1 pipeline:
+# checkpoint-1 DETECTION behaviour:
 #
-#   file source -> decoder -> nvstreammux -> nvinfer -> nvdsosd -> fakesink
+#   file source -> decoder -> nvstreammux -> nvinfer -> nvmultistreamtiler
+#                -> nvdsosd -> fakesink
+#
+# This is checkpoint 1's regression test, and it deliberately keeps working as
+# later stages are added to the pipeline. Every check here reads the DETECTOR
+# metadata dump, which deepstream-app writes from a probe on the primary-gie
+# bin's src pad -- upstream of any tracker -- so a tracker cannot alter it.
+# Checkpoint 2's own evidence lives in scripts/verify_tracking.sh.
 #
 # Needs no display, terminates on its own, never loops. Every claim is checked
 # against captured output; nothing is asserted from appearance.
@@ -15,7 +22,7 @@
 #   5  nvinfer reports no config/parser errors               (log)
 #   6  detections are produced, with RAW per-class counts    (KITTI metadata)
 #   7  class_id 2 really is `person`                         (filter-out run)
-#   8  no tracker or analytics metadata exists yet           (static + runtime)
+#   8  no ANALYTICS metadata exists yet                      (static + runtime)
 #
 # Usage:
 #   ./scripts/verify_inference.sh
@@ -25,14 +32,15 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ds_common.sh"
 
 while (( $# > 0 )); do
     case "$1" in
-        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
         *) die "Unknown option '$1'. Try --help." ;;
     esac
 done
 
 require_tools
 require_deepstream_app
-require_elements nvstreammux nvinfer nvvideoconvert nvdsosd fakesink
+require_elements nvstreammux nvinfer nvtracker nvmultistreamtiler \
+                 nvvideoconvert nvdsosd fakesink
 
 APP_CFG="$(require_config deepstream_app_walk_headless.txt)"
 INFER_CFG="$(require_config config_infer_primary_trafficcamnet.txt)"
@@ -191,7 +199,13 @@ mkdir -p "$FILTER_KITTI"
 sed -e "s|^model-engine-file=.*|model-engine-file=$(readlink -f "$STABLE_ENGINE")|" \
     -e "0,/^\[property\]/s|^\[property\]|[property]\nfilter-out-class-ids=0;1;3|" \
     "$INFER_CFG" > "$WORKDIR/infer_filtered.txt"
+# The track dumps are dropped from this run, not just redirected: their relative
+# paths would not resolve from $WORKDIR, and this check is about the detector
+# only. Removing them keeps checkpoint 2's artifacts untouched by checkpoint 1.
 sed -e "s|^gie-kitti-output-dir=.*|gie-kitti-output-dir=$FILTER_KITTI|" \
+    -e "/^kitti-track-output-dir=/d" \
+    -e "/^terminated-track-output-dir=/d" \
+    -e "/^shadow-track-output-dir=/d" \
     -e "s|^config-file=.*|config-file=$WORKDIR/infer_filtered.txt|" \
     "$APP_CFG" > "$WORKDIR/app_filtered.txt"
 
@@ -215,18 +229,23 @@ else
     note_fail "$FILTERED_NON_PERSON non-person detections survived a filter that excludes all but class 2"
 fi
 
-# --- 8. no tracker or analytics ---
-bold "== CHECK 8: no tracker or analytics yet =="
-if grep -rqE '^\[tracker\]|^\[secondary-gie|nvdsanalytics|kitti-track-output-dir' "$CONFIG_DIR"/; then
-    grep -rnE '^\[tracker\]|^\[secondary-gie|nvdsanalytics|kitti-track-output-dir' "$CONFIG_DIR"/ >&2
-    note_fail "tracker or analytics configuration is present"
+# --- 8. no analytics ---
+# Originally "no tracker OR analytics". Checkpoint 2 adds a tracker on purpose,
+# so that half of the assertion was invalidated by design and was narrowed to
+# analytics only. The intent is unchanged: checkpoint 3 has not started. What
+# checkpoint 1 actually owns -- detection metadata -- is still fully regression
+# tested by CHECKS 1-7 above, which read only the pre-tracker detector dump.
+bold "== CHECK 8: no analytics yet (checkpoint 3 not started) =="
+if grep -rqE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/; then
+    grep -rnE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/ >&2
+    note_fail "analytics or secondary-gie configuration is present"
 else
-    note_pass "no tracker, secondary-gie or analytics group in any config"
+    note_pass "no analytics or secondary-gie group in any config"
 fi
-if grep -qE 'nvtracker|nvdsanalytics' "$RUN_LOG"; then
-    note_fail "the runtime log mentions a tracker or analytics element"
+if grep -q 'nvdsanalytics' "$RUN_LOG"; then
+    note_fail "the runtime log mentions an analytics element"
 else
-    note_pass "no tracker or analytics element appeared at runtime"
+    note_pass "no analytics element appeared at runtime"
 fi
 
 # ---------------------------------------------------------------- summary ----
