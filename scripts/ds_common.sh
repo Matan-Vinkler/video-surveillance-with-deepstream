@@ -31,6 +31,12 @@ TRACK_DIR="${TRACK_DIR:-$REPO_ROOT/models/tracks}"
 TERMINATED_DIR="${TERMINATED_DIR:-$REPO_ROOT/models/tracks_terminated}"
 SHADOW_DIR="${SHADOW_DIR:-$REPO_ROOT/models/tracks_shadow}"
 
+# Restricted-zone evidence. NOT written by deepstream-app -- it has no probe for
+# analytics metadata -- but by tools/analytics_probe.cpp. See
+# docs/milestone-05-restricted-zone.md
+ZONE_DIR="${ZONE_DIR:-$REPO_ROOT/models/zone}"
+PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/analytics_probe}"
+
 # The committed nvinfer config references a version-free engine name, so that no
 # TensorRT version or GPU name is hard-coded in a checked-in file. The wrapper
 # maintains this symlink and points it at whatever engine the CURRENT
@@ -78,6 +84,32 @@ require_tracker_assets() {
        This milestone uses the vendor YAML as shipped and never copies or
        modifies it. Present in that directory:
 $(ls -1 "$(dirname "$cfg")"/config_tracker_*.yml 2>/dev/null | sed 's|^|           |' || echo '           (none)')"
+}
+
+# ------------------------------------------------------------- analytics ----
+# The restricted zone is the one piece of configuration in this repository that
+# is genuinely OUR application logic, so unlike the tracker YAML it is a
+# repository-local file rather than a vendor one.
+analytics_config() {
+    printf '%s\n' "$CONFIG_DIR/config_nvdsanalytics_restricted_zone.txt"
+}
+
+require_analytics_config() {
+    local cfg
+    cfg="$(analytics_config)"
+    [[ -r "$cfg" ]] || die "The restricted-zone analytics configuration is missing:
+           $cfg"
+}
+
+require_probe() {
+    # deepstream-app cannot report nvdsanalytics metadata, so the verification
+    # needs its own reader. Build it on demand rather than committing a binary.
+    [[ -x "$PROBE_BIN" ]] && return 0
+    printf 'Building the analytics probe (%s)...\n' "$PROBE_BIN"
+    make -C "$REPO_ROOT/tools" >/dev/null \
+        || die "Could not build the analytics probe. Try: make -C tools"
+    [[ -x "$PROBE_BIN" ]] \
+        || die "'make -C tools' reported success but '$PROBE_BIN' is not executable."
 }
 
 expected_fp16_engine() {
@@ -156,14 +188,20 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     printf '  %-24s %s\n' "DeepStream" "$(ds_version)"
 
     bold "== Required elements =="
-    require_elements nvstreammux nvinfer nvtracker nvmultistreamtiler \
-                     nvvideoconvert nvdsosd nv3dsink fakesink
+    require_elements nvstreammux nvinfer nvtracker nvdsanalytics \
+                     nvmultistreamtiler nvvideoconvert nvdsosd nv3dsink fakesink
     printf '  %-24s %s\n' "pipeline elements" "all present"
 
     bold "== Tracker assets (vendor, read-only) =="
     require_tracker_assets
     printf '  %-24s %s\n' "low-level library" "$(tracker_lib)"
     printf '  %-24s %s\n' "NvSORT config" "$(tracker_config)"
+
+    bold "== Restricted zone (ours) =="
+    require_analytics_config
+    printf '  %-24s %s\n' "analytics config" "$(analytics_config)"
+    printf '  %-24s %s\n' "ROI" "$(sed -n 's/^roi-RF=//p' "$(analytics_config)")"
+    printf '  %-24s %s\n' "class filter" "class-id=$(sed -n 's/^class-id=//p' "$(analytics_config)")"
 
     bold "== Engine =="
     resolved="$(ensure_engine_link)"
@@ -173,6 +211,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
     bold "== Configuration =="
     for cfg in config_infer_primary_trafficcamnet.txt \
+               config_nvdsanalytics_restricted_zone.txt \
                deepstream_app_walk_headless.txt \
                deepstream_app_walk_display.txt; do
         printf '  %-24s %s\n' "$cfg" "$([[ -r "$CONFIG_DIR/$cfg" ]] && echo OK || echo MISSING)"

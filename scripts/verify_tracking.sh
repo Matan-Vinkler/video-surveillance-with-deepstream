@@ -337,18 +337,23 @@ else
     note_fail "the preflight accepted a missing tracker library"
 fi
 
-# --- 9. no analytics ---
-bold "== CHECK 9: no analytics yet (checkpoint 3 not started) =="
-if grep -rqE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/; then
-    grep -rnE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/ >&2
-    note_fail "analytics configuration is present"
+# --- 9. nothing beyond the current milestone scope ---
+# Originally "no analytics yet". Checkpoint 3 adds nvdsanalytics on purpose, so
+# the assertion was narrowed to what is still out of scope. Tracking itself --
+# what this script owns -- is unaffected: CHECKS 1-8 read the tracker dump,
+# which checkpoint 3 proves is byte-identical with and without analytics.
+bold "== CHECK 9: nothing beyond the approved scope =="
+OUT_OF_SCOPE='^\[secondary-gie|^\[line-crossing|^\[overcrowding|^\[direction-detection|^\[message-broker|^\[message-converter|msg-broker-proto-lib'
+if grep -rqE "$OUT_OF_SCOPE" "$CONFIG_DIR"/; then
+    grep -rnE "$OUT_OF_SCOPE" "$CONFIG_DIR"/ >&2
+    note_fail "out-of-scope configuration is present (secondary inference, extra analytics rules or messaging)"
 else
-    note_pass "no analytics or secondary-gie group in any config"
+    note_pass "no secondary-gie, line-crossing, overcrowding, direction or messaging group"
 fi
-if grep -q 'nvdsanalytics' "$RUN_LOG"; then
-    note_fail "the runtime log mentions an analytics element"
+if grep -qE 'nvmsgconv|nvmsgbroker' "$RUN_LOG"; then
+    note_fail "the runtime log mentions a messaging element"
 else
-    note_pass "no analytics element appeared at runtime"
+    note_pass "no messaging element appeared at runtime"
 fi
 
 # ---------------------------------------------------------------- summary ----

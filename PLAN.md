@@ -28,30 +28,33 @@ Target end state, and where the work currently sits:
 
 ```
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
-   [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]      [M5.3]         [M9]
-       │                │               │                            │
-  DeepStream:      TrafficCamNet FP16   NvSORT via              monitoring,
-  source ! decoder   TensorRT engine    nvtracker               logging
-  ! nvstreammux      via nvinfer        -> object_id
-  ! nvinfer          -> NvDsObjectMeta
+   [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]    [DONE M5.3]      [M9]
+       │                │               │              │             │
+  DeepStream:      TrafficCamNet FP16   NvSORT via   restricted   monitoring,
+  source ! decoder   TensorRT engine    nvtracker    zone via     logging
+  ! nvstreammux      via nvinfer        -> object_id nvdsanalytics
+  ! nvinfer          -> NvDsObjectMeta               -> in/out
   ! nvtracker
+  ! nvdsanalytics
   ! nvmultistreamtiler
   ! nvdsosd ! sink
 ```
 
-Currently implemented: **video input through to tracked person detection**. A
-recorded video is replayed as a simulated camera (M2), TrafficCamNet was selected
-(M3) and optimised into TensorRT engines (M4), the FP16 engine runs on that
-source through `deepstream-app` producing verified `person` metadata and
-on-screen bounding boxes (M5 checkpoint 1), and those detections now carry a
-persistent `object_id` (M5 checkpoint 2).
+Currently implemented: **the full detection → tracking → restricted-zone path**.
+A recorded video is replayed as a simulated camera (M2), TrafficCamNet was
+selected (M3) and optimised into TensorRT engines (M4), the FP16 engine runs on
+that source through `deepstream-app` producing verified `person` metadata and
+on-screen bounding boxes (M5 checkpoint 1), those detections carry a persistent
+`object_id` (M5 checkpoint 2), and the application now determines whether that
+tracked person is inside a restricted zone (M5 checkpoint 3).
 
-Still missing: restricted-zone analytics — the last Milestone 5 checkpoint.
+**Milestone 5 is complete.** Next is containerisation and deployment.
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
 Inference pipeline: [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md).
 Tracking: [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md).
+Restricted zone: [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md).
 
 ---
 
@@ -64,8 +67,8 @@ learning progress (§7) is tracked separately.
 - [x] **2. Collect or Simulate Video Input**
 - [x] **3. Select Pretrained Model**
 - [x] **4. Optimize Model using TensorRT**
-- [ ] **5. Build DeepStream Inference Pipeline** ← active (checkpoint 1 of 3 complete)
-- [ ] **6. Containerize the Application**
+- [x] **5. Build DeepStream Inference Pipeline**
+- [ ] **6. Containerize the Application** ← next
 - [ ] **7. Deploy Inference with Triton Inference Server**
 - [ ] **8. Deploy on Edge Device (Jetson)**
 - [ ] **9. Monitoring and Logging**
@@ -77,7 +80,7 @@ learning progress (§7) is tracked separately.
 | 2 | Collect or Simulate Video Input | Complete | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md), [`docs/milestone-02-inspection.md`](docs/milestone-02-inspection.md) |
 | 3 | Select Pretrained Model | Complete | [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md) |
 | 4 | Optimize Model using TensorRT | Complete | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md), [`docs/milestone-04-inspection.md`](docs/milestone-04-inspection.md) |
-| 5 | Build DeepStream Inference Pipeline | **In progress** — checkpoint 1 complete | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md), [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md), [`docs/milestone-05-inspection.md`](docs/milestone-05-inspection.md) |
+| 5 | Build DeepStream Inference Pipeline | **Complete** — all 3 checkpoints | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md), [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md), [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md), [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md), [`docs/milestone-05-inspection.md`](docs/milestone-05-inspection.md) |
 | 6 | Containerize the Application | Not started | — |
 | 7 | Deploy Inference with Triton | Not started | — |
 | 8 | Deploy on Edge Device (Jetson) | Not started | — |
@@ -88,13 +91,13 @@ learning progress (§7) is tracked separately.
 
 ## 4. Current milestone
 
-**Milestone 5 is active. Checkpoints 1 and 2 of 3 are complete.**
+**Milestone 5 is complete. All 3 checkpoints are done.**
 
 | # | Checkpoint | Status |
 |---|---|---|
 | 5.1 | Inference pipeline producing visible person detections | **Complete** |
 | 5.2 | Tracking (`nvtracker`) — object identity across frames | **Complete** |
-| 5.3 | Restricted-zone analytics (`nvdsanalytics`) | Not started |
+| 5.3 | Restricted-zone analytics (`nvdsanalytics`) | **Complete** |
 
 **Checkpoint 1 delivered:** `deepstream-app` running the FP16 engine on
 `sample_walk.mov`, producing 230 verified `person` detections across 288 frames
@@ -115,11 +118,20 @@ recorded as **NOT EXERCISED**; and the single ID change that did occur, in the
 first six frames as the person enters at the image border, is characterised but
 **not explained** — nothing was tuned around it.
 
-**Next — checkpoint 3: restricted-zone analytics.** Add `nvdsanalytics` so a
-tracked identity becomes a zone statement: "this person entered the restricted
-area and stayed", which is a claim about one `object_id` over time.
+**Checkpoint 3 delivered:** one ROI-filtering zone, with geometry derived from
+the measured track rather than chosen. The walker enters at **frame 109**, stays
+**75 consecutive frames (2.50 s)**, exits after **frame 183** and remains tracked
+for **90 more**. DeepStream's own `NvDsAnalyticsFrameMeta` confirms it, and
+agrees with an independent recomputation on **100% of 230 frames**. Detection and
+tracking are provably unchanged (0 of 288 frames differ). Full record:
+[`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md).
 
-Carried forward into the remaining checkpoint:
+Checkpoint 3 needed the project's **first code**: `deepstream-app` can run
+`nvdsanalytics` but cannot report it, so `tools/analytics_probe.cpp` reads the
+ROI verdict back. It is test equipment, cross-checked against `deepstream-app`
+rather than trusted, and `deepstream-app` remains the application.
+
+Carried forward:
 
 - **FP16 remains the default.** INT8 stays available if the added stages consume
   enough of the 33.37 ms frame budget to justify revisiting it.
@@ -129,9 +141,14 @@ Carried forward into the remaining checkpoint:
   tracker defaults, so a typo would substitute a different backend without any
   error. The verification guards it; DeepStream does not
   ([detail](docs/milestone-05-tracking.md) §7).
+- **A bad analytics `config-file` fails LOUDLY**, unlike the tracker's — a useful
+  asymmetry to remember ([detail](docs/milestone-05-restricted-zone.md) §9).
 - **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine in
-  isolation. Worth measuring once analytics is in — and now that a tracker is in
-  the path, it is no longer only an inference cost.
+  isolation. The assembled pipeline now contains a tracker and analytics as well,
+  so a throughput figure is no longer only an inference cost.
+- **The probe diverges from deepstream-app on 10 early frames**
+  ([detail](docs/milestone-05-restricted-zone.md) §6) — bounded and far from the
+  ROI, mechanism unproven.
 
 Out of scope until explicitly opened: Triton, Docker, MQTT, monitoring.
 
@@ -316,6 +333,26 @@ related but not identical.
 - [x] That obsolete config keys (`enable-batch-process`, `enable-past-frame`) are
       silently ignored rather than rejected
 
+**From Milestone 5 — Restricted zone (checkpoint 3)**
+
+- [x] `nvdsanalytics` rule types, group naming (`roi-filtering-stream-<id>`) and
+      the `roi-<label>` key whose label keys all downstream metadata
+- [x] ROI coordinates as pixels against a declared `config-width`/`config-height`,
+      rescaled to the surface at context creation
+- [x] That the ROI test point is the **feet** (`centroid_y + mean_height/2`), not
+      the centroid — and how to design an ROI that proves which is used
+- [x] That occupancy is history-dependent through a 50-frame smoothed height
+- [x] `NvDsAnalyticsObjInfo` / `NvDsAnalyticsFrameMeta`, and that analytics only
+      annotates — it never removes objects, despite NVIDIA's sample comment
+- [x] That `deepstream-app` can RUN analytics but cannot REPORT it, and how to
+      establish that exhaustively before writing code
+- [x] Writing a GStreamer pad probe against DeepStream metadata in C++, and
+      building it without root or touching `/opt`
+- [x] Cross-checking purpose-built test equipment against the real application
+      instead of trusting it
+- [x] Bounding a known divergence instead of absorbing it into a tolerance
+- [x] Why zone logic is application configuration rather than a model capability
+
 ---
 
 ## 8. Key engineering decisions
@@ -355,6 +392,11 @@ related but not identical.
 | NVIDIA's tracker YAML referenced in place, never copied | Copying would silently fork a vendor file that can drift. The repository preflight-checks the path instead | 5 | Active |
 | Tracking criterion is "zero mid-track ID switches", not a coverage percentage | A percentage cannot separate a track that settles after a few frames from one that breaks mid-clip. Only the second breaks zone logic. Unique-ID count and coverage are reported as metrics | 5 | Active |
 | Untested tracker capabilities recorded as NOT EXERCISED | The clip has no interior detector gaps and no occlusion, so gap bridging and re-association were never invoked. A passing run must not be read as evidence for them | 5 | Active |
+| **ROI filtering, not line crossing**, for the restricted zone | Occupancy is a state ("is someone in the zone now"), which is the use case. Line crossing is an event at a boundary, needs `mode`/`extended` tuning, and depends on tracker continuity in a way occupancy does not ([detail](docs/milestone-05-restricted-zone.md) §2) | 5 | Active |
+| ROI geometry **derived from the measured track**, not chosen | Boundaries placed to maximise clearance from the trajectory, and positioned so the foot rule and a centroid rule give 75 vs 0 frames — making the reference point an experiment rather than a citation | 5 | Active |
+| **A purpose-built C++ probe** to read analytics metadata | `deepstream-app` never reads `NVDS_USER_*_META_NVDSANALYTICS`, `nvmsgconv` does not carry it, `pyds` is absent, and the shipped analytics sample forces NvDCF and a display. Every shipped route was checked before writing code ([detail](docs/milestone-05-restricted-zone.md) §5) | 5 | Active |
+| The probe is **cross-checked, not trusted** | Its detector output must be bit-identical to `deepstream-app`'s or its analytics evidence is rejected. Test equipment that cannot be audited is not evidence | 5 | Active |
+| `operate-on-class-ids` rejected as a "fix" for the probe divergence | It made object counts agree by disabling the tracker's removal path, while the retained objects still carried `UNTRACKED_OBJECT_ID` — hiding the difference rather than resolving it | 5 | Active |
 
 ---
 

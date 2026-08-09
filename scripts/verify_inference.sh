@@ -199,15 +199,23 @@ mkdir -p "$FILTER_KITTI"
 sed -e "s|^model-engine-file=.*|model-engine-file=$(readlink -f "$STABLE_ENGINE")|" \
     -e "0,/^\[property\]/s|^\[property\]|[property]\nfilter-out-class-ids=0;1;3|" \
     "$INFER_CFG" > "$WORKDIR/infer_filtered.txt"
-# The track dumps are dropped from this run, not just redirected: their relative
-# paths would not resolve from $WORKDIR, and this check is about the detector
-# only. Removing them keeps checkpoint 2's artifacts untouched by checkpoint 1.
-sed -e "s|^gie-kitti-output-dir=.*|gie-kitti-output-dir=$FILTER_KITTI|" \
-    -e "/^kitti-track-output-dir=/d" \
-    -e "/^terminated-track-output-dir=/d" \
-    -e "/^shadow-track-output-dir=/d" \
-    -e "s|^config-file=.*|config-file=$WORKDIR/infer_filtered.txt|" \
-    "$APP_CFG" > "$WORKDIR/app_filtered.txt"
+# This check is about the detector alone, so the later stages are stripped: the
+# track dumps are dropped (their relative paths would not resolve from $WORKDIR)
+# and analytics is disabled.
+#
+# config-file= must be rewritten for [primary-gie] ONLY. Since checkpoint 3
+# there are two groups carrying that key, and a blanket substitution would point
+# nvdsanalytics at an nvinfer config -- which fails the whole run.
+awk -v infer="$WORKDIR/infer_filtered.txt" -v kitti="$FILTER_KITTI" '
+    /^\[/ { group = $0 }
+    /^gie-kitti-output-dir=/            { print "gie-kitti-output-dir=" kitti; next }
+    /^kitti-track-output-dir=/          { next }
+    /^terminated-track-output-dir=/     { next }
+    /^shadow-track-output-dir=/         { next }
+    group == "[primary-gie]"    && /^config-file=/ { print "config-file=" infer; next }
+    group == "[nvds-analytics]" && /^enable=/      { print "enable=0"; next }
+                                        { print }
+' "$APP_CFG" > "$WORKDIR/app_filtered.txt"
 
 filter_rc=0
 deepstream-app -c "$WORKDIR/app_filtered.txt" >"$WORKDIR/run2.log" 2>&1 || filter_rc=$?
@@ -229,23 +237,27 @@ else
     note_fail "$FILTERED_NON_PERSON non-person detections survived a filter that excludes all but class 2"
 fi
 
-# --- 8. no analytics ---
-# Originally "no tracker OR analytics". Checkpoint 2 adds a tracker on purpose,
-# so that half of the assertion was invalidated by design and was narrowed to
-# analytics only. The intent is unchanged: checkpoint 3 has not started. What
-# checkpoint 1 actually owns -- detection metadata -- is still fully regression
+# --- 8. nothing beyond the current milestone scope ---
+# This check has now been narrowed twice, each time because a later checkpoint
+# added -- on purpose -- the very thing it forbade:
+#   originally  no tracker AND no analytics
+#   checkpoint 2  added nvtracker      -> narrowed to analytics only
+#   checkpoint 3  added nvdsanalytics  -> narrowed to what is still out of scope
+# The intent has never changed: nothing beyond the approved scope has crept in.
+# What checkpoint 1 owns -- detection metadata -- is still fully regression
 # tested by CHECKS 1-7 above, which read only the pre-tracker detector dump.
-bold "== CHECK 8: no analytics yet (checkpoint 3 not started) =="
-if grep -rqE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/; then
-    grep -rnE '^\[nvds-analytics|^\[secondary-gie|nvdsanalytics' "$CONFIG_DIR"/ >&2
-    note_fail "analytics or secondary-gie configuration is present"
+bold "== CHECK 8: nothing beyond the approved scope =="
+OUT_OF_SCOPE='^\[secondary-gie|^\[line-crossing|^\[overcrowding|^\[direction-detection|^\[message-broker|^\[message-converter|msg-broker-proto-lib'
+if grep -rqE "$OUT_OF_SCOPE" "$CONFIG_DIR"/; then
+    grep -rnE "$OUT_OF_SCOPE" "$CONFIG_DIR"/ >&2
+    note_fail "out-of-scope configuration is present (secondary inference, extra analytics rules or messaging)"
 else
-    note_pass "no analytics or secondary-gie group in any config"
+    note_pass "no secondary-gie, line-crossing, overcrowding, direction or messaging group"
 fi
-if grep -q 'nvdsanalytics' "$RUN_LOG"; then
-    note_fail "the runtime log mentions an analytics element"
+if grep -qE 'nvmsgconv|nvmsgbroker' "$RUN_LOG"; then
+    note_fail "the runtime log mentions a messaging element"
 else
-    note_pass "no analytics element appeared at runtime"
+    note_pass "no messaging element appeared at runtime"
 fi
 
 # ---------------------------------------------------------------- summary ----

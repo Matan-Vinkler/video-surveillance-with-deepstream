@@ -96,5 +96,16 @@ ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/
 gpu-id=0
 display-tracking-id=1
 
+# Milestone 5 checkpoint 3 -- identical to the group in the headless config.
+# On screen, expect the ROI rectangle outlined and a live "RF=<count>" label.
+# Do NOT expect the person's box to change colour or gain a "ROI:" suffix when
+# they step inside: nvdsanalytics does set both, but deepstream-app's
+# process_meta frees display_text and resets border_color downstream, so those
+# per-object indications are discarded before they reach the OSD.
+# Evidence and full record: docs/milestone-05-restricted-zone.md
+[nvds-analytics]
+enable=1
+config-file=config_nvdsanalytics_restricted_zone.txt
+
 [tests]
 file-loop=0

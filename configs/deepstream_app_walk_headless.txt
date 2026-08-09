@@ -144,6 +144,24 @@ ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/
 gpu-id=0
 display-tracking-id=1
 
+# Milestone 5 checkpoint 3. deepstream-app places nvdsanalytics immediately
+# after the tracker and before the tiler; like the tracker's position, that
+# ordering is built into create_common_elements() and is not configurable:
+#
+#   nvinfer -> nvtracker -> nvdsanalytics -> nvmultistreamtiler -> nvdsosd
+#
+# Analytics only ANNOTATES. It attaches NvDsAnalyticsObjInfo per object and
+# NvDsAnalyticsFrameMeta per frame, and never removes objects from the metadata
+# -- despite what NVIDIA's own sample config comment claims.
+#
+# deepstream-app can RUN this but cannot report it: it never reads
+# NVDS_USER_OBJ_META_NVDSANALYTICS or NVDS_USER_FRAME_META_NVDSANALYTICS, so the
+# ROI verdict appears in no dump and no log. tools/analytics_probe.cpp exists
+# solely to read it back. See docs/milestone-05-restricted-zone.md
+[nvds-analytics]
+enable=1
+config-file=config_nvdsanalytics_restricted_zone.txt
+
 # Never loop: verification must terminate on its own.
 [tests]
 file-loop=0

@@ -14,8 +14,9 @@ passing. The measured result is one stable track of **224 consecutive frames**
 with **zero mid-track ID switches**, preceded by a **6-frame establishment phase
 that used a different ID** (§5).
 
-No analytics, no Triton, no container. No engine was built. NVIDIA's tracker
-configuration was used exactly as installed and was neither copied nor modified.
+No Triton, no container. No engine was built. NVIDIA's tracker configuration was
+used exactly as installed and was neither copied nor modified. Restricted-zone
+analytics was out of scope here and was added by the next checkpoint.
 
 ---
 
@@ -164,10 +165,14 @@ rather than quietly counted as working.
 == CHECK 8c: RUN 1 actually read the vendor NvSORT yml ==
   PASS  RUN 1 shows no config-fallback warning: the NvSORT yml was read
   PASS  ds_common.sh preflight fails clearly when the assets are missing
-== CHECK 9: no analytics yet (checkpoint 3 not started) ==
-  PASS  no analytics or secondary-gie group in any config
-  PASS  no analytics element appeared at runtime
+== CHECK 9: nothing beyond the approved scope ==
+  PASS  no secondary-gie, line-crossing, overcrowding, direction or messaging group
+  PASS  no messaging element appeared at runtime
 ```
+
+*(CHECK 9 originally read "no analytics yet". Checkpoint 3 adds `nvdsanalytics`
+deliberately, so it was narrowed to what is still out of scope. The output above
+is from a re-run after that change.)*
 
 ### The measured tracking behaviour
 
@@ -396,6 +401,13 @@ Two useful side-findings did come out of it:
   open question before this run; it is now measured.
 - `tracker_confidence` is a constant `0.500` for NvSORT on this clip, so it is
   not a useful discriminator here.
+
+> **Amended by checkpoint 3.** `nvdsanalytics` now sits between `nvtracker` and
+> the tiler, and CHECK 9 was narrowed from "no analytics" to "nothing beyond the
+> approved scope". Tracking itself is unaffected and is re-measured on every
+> checkpoint-3 run: **0 mid-track ID switches, same 224-frame longest run**, and
+> the tracker dump is identical with and without analytics (0 of 288 frames
+> differ). Record: [`milestone-05-restricted-zone.md`](milestone-05-restricted-zone.md).
 
 ## 12. Impact on checkpoint 1
 

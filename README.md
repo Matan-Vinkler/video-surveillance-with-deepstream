@@ -1,13 +1,14 @@
 # Video Surveillance with DeepStream
 
-**Real-time person detection and tracking on an NVIDIA Jetson Orin Nano**, built
-from GStreamer, TensorRT and DeepStream.
+**Real-time person detection, tracking and restricted-zone monitoring on an
+NVIDIA Jetson Orin Nano**, built from GStreamer, TensorRT and DeepStream.
 
 A recorded video is replayed as a simulated camera — paced in real time, not
 consumed as fast as the hardware allows — and every frame is run through a
 TensorRT-optimised person detector. Each detected person is then given a
-persistent identity that survives from frame to frame. Results are drawn on
-screen and exposed as structured metadata, so they can be checked by a machine
+persistent identity that survives from frame to frame, and checked against a
+restricted zone: is *this* person inside the area that matters? Results are drawn
+on screen and exposed as structured metadata, so they can be checked by a machine
 rather than by eye.
 
 Everything runs on the device. Nothing is downloaded at run time, no model is
@@ -24,15 +25,18 @@ flowchart LR
     C["nvstreammux<br/>batch = 1"]
     D["nvinfer<br/>TrafficCamNet FP16"]
     E["nvtracker<br/>NvSORT"]
-    F["nvmultistreamtiler<br/>1x1"]
-    G["nvdsosd<br/>boxes, labels, track ids"]
-    H["nv3dsink<br/>or fakesink, headless"]
-    I["detector dump<br/>class, confidence, box"]
-    J["tracker dump<br/>+ object_id"]
+    F["nvdsanalytics<br/>restricted zone"]
+    G["nvmultistreamtiler<br/>1x1"]
+    H["nvdsosd<br/>boxes, ids, zone outline"]
+    I["nv3dsink<br/>or fakesink, headless"]
+    J["detector dump<br/>class, confidence, box"]
+    K["tracker dump<br/>+ object_id"]
+    L["zone verdict<br/>inside / outside"]
 
-    A --> B --> C --> D --> E --> F --> G --> H
-    D -. "NvDsObjectMeta" .-> I
-    E -. "+ object_id" .-> J
+    A --> B --> C --> D --> E --> F --> G --> H --> I
+    D -. "NvDsObjectMeta" .-> J
+    E -. "+ object_id" .-> K
+    F -. "NvDsAnalyticsFrameMeta" .-> L
 ```
 
 Frames stay in NVMM (NVIDIA hardware memory) from decode to display, so there is
@@ -45,11 +49,13 @@ no copy into system memory anywhere in the path.
 - **Detects people** with TrafficCamNet, running as a TensorRT engine on the GPU.
 - **Tracks each person across frames** with NvSORT, so a detection becomes an
   identity — the prerequisite for saying "*this* person entered the zone".
-- **Draws bounding boxes, labels and track IDs** on screen, colour-coded per class.
-- **Emits per-frame metadata twice** — once from the detector and once from the
-  tracker — so correctness is asserted from data, never from "it looked right".
-- **Verifies itself headlessly**: two commands run the whole pipeline with no
-  display, check seventeen properties of the result, and exit non-zero on failure.
+- **Watches a restricted zone** and reports, per frame, whether a tracked person
+  is inside it. The zone is configuration, not something the model learned.
+- **Draws bounding boxes, labels, track IDs and the zone outline** on screen.
+- **Emits per-frame metadata at three points** — detector, tracker and analytics
+  — so correctness is asserted from data, never from "it looked right".
+- **Verifies itself headlessly**: three commands run the whole pipeline with no
+  display, check thirty-one properties of the result, and exit non-zero on failure.
 
 ## Results
 
@@ -71,6 +77,22 @@ The tracker is not credited with what this clip cannot test. There are **no
 interior detector gaps**, so gap bridging, shadow tracking and occlusion recovery
 were never invoked and are recorded as
 [NOT EXERCISED](docs/milestone-05-tracking.md) rather than as passing.
+
+Restricted-zone occupancy, from DeepStream's own analytics metadata:
+
+| | |
+|---|---|
+| Zone | rectangle x ∈ [650, 1260], y ∈ [640, 820] at 1920×1080 |
+| Enters | **frame 109** |
+| Inside | **75 consecutive frames — 2.50 s**, one unbroken interval |
+| Exits | after **frame 183**, then tracked for 90 more frames |
+| Agreement with an independent recomputation | **100.00%** over 230 frames |
+| With `class-id=0` instead of `2` | **zero** occupancy — the class filter, not the geometry, selects the person |
+
+The zone's geometry was **derived from the measured track**, not chosen, and
+placed so that the foot-point rule DeepStream actually uses gives 75 frames while
+a centroid rule would give 0 — turning "which point does it test?" into an
+experiment. [Full detail →](docs/milestone-05-restricted-zone.md)
 
 Inference cost, measured per precision at batch 1, 960×544 (3 interleaved
 repetitions each):
@@ -96,7 +118,9 @@ FP16 is the default; INT8 is built and benchmarked but held in reserve.
   L4T R39.2, Ubuntu 24.04, DeepStream 9.1.0, TensorRT 10.16.2, CUDA 13.2.
 - **GStreamer 1.x** with `gst-launch-1.0`, `gst-inspect-1.0`, `gst-discoverer-1.0`.
 - **NVIDIA GStreamer elements**: `nvv4l2decoder`, `nvstreammux`, `nvinfer`,
-  `nvtracker`, `nvmultistreamtiler`, `nvdsosd`, `nv3dsink`.
+  `nvtracker`, `nvdsanalytics`, `nvmultistreamtiler`, `nvdsosd`, `nv3dsink`.
+- **A C++ toolchain** (`g++`, `make`, `pkg-config`) — only to build the
+  verification probe, which is not part of the application.
 - A display, **only** for the visible playback commands. Everything else runs
   headlessly.
 
@@ -120,6 +144,7 @@ The DeepStream version is discovered at run time through the
 ./scripts/ds_common.sh --selftest
 ./scripts/verify_inference.sh       # detection
 ./scripts/verify_tracking.sh        # identity across frames
+./scripts/verify_zone.sh            # restricted-zone occupancy
 
 # 4. Watch it, if a display is attached
 ./scripts/run_inference.sh
@@ -136,13 +161,14 @@ The window opens on the physically attached monitor, not in an SSH client.
 
 ## Usage
 
-**Inference and tracking**
+**Inference, tracking and the restricted zone**
 
 | Command | What it does |
 |---|---|
-| `./scripts/run_inference.sh` | Visible detection and tracking with boxes and IDs, paced in real time |
+| `./scripts/run_inference.sh` | Visible run with boxes, IDs and the zone outline, paced in real time |
 | `./scripts/verify_inference.sh` | Headless detection run with eight machine-checked assertions |
 | `./scripts/verify_tracking.sh` | Headless tracking run: four pipelines, nine checks, and a full identity report |
+| `./scripts/verify_zone.sh` | Headless zone run: five pipelines, fourteen checks, and an occupancy report |
 
 **Model and engines**
 
@@ -206,6 +232,16 @@ ID switches *mid-track*, not a coverage percentage, because only a break in the
 middle of a trajectory would defeat zone logic.
 [Full detail →](docs/milestone-05-tracking.md)
 
+**The restricted zone.** `nvdsanalytics` tests one point per object against a
+polygon each frame. That point is not the box centre: it is the centroid shifted
+down by half the *smoothed* box height — effectively the person's **feet**, which
+is the right choice for a zone drawn on the ground. The zone itself is a config
+file, because "which area matters" is a property of the installation, not of the
+images. `deepstream-app` can run analytics but cannot report it, so a small C++
+pad probe reads the verdict back; it is cross-checked against `deepstream-app`'s
+own output rather than trusted.
+[Full detail →](docs/milestone-05-restricted-zone.md)
+
 ## Verification
 
 Two headless suites. Neither needs a display, both terminate on their own, and
@@ -247,13 +283,35 @@ It also prints a full identity report: per-track lifespans, the longest
 continuous track, when the track was established, and an explicit list of the
 capabilities this clip did **not** exercise.
 
+**`./scripts/verify_zone.sh` — the restricted zone.** Five pipeline runs,
+fourteen checks:
+
+1. The application runs cleanly with `nvdsanalytics` instantiated.
+2. **Analytics changed neither detection nor tracking** — a control run with it
+   disabled differs on 0 of 288 frames, in both dumps.
+3. **The probe ran the same pipeline** — its detector output is bit-identical to
+   `deepstream-app`'s on all 288 frames, and the one known divergence is bounded
+   and required to end long before the zone is reached.
+4. Analytics metadata is present and machine-readable on every frame.
+5–8. The person is outside, **enters at frame 109 ±2**, stays **75 frames in one
+   unbroken interval**, **exits after frame 183 ±2**, and stays tracked for 90
+   more frames.
+9. **100% agreement** with an independent recomputation of DeepStream's rule.
+10. `class-id=2` is what restricts the rule — proven by re-running the identical
+    ROI with `class-id=0`, which reports zero occupancy.
+11. The ROI test point is the **feet, not the centroid** — 75 frames vs 0.
+12. A broken analytics config fails the run loudly (exit 255).
+13. No line crossing, overcrowding, direction detection or messaging.
+14. Checkpoint 2, checkpoint 1 and Milestone 2 regressions all still pass.
+
 ## Project structure
 
 ```
-├── configs/     DeepStream application and nvinfer configuration
+├── configs/     DeepStream application, nvinfer and restricted-zone configuration
 ├── scripts/     Inspection, build, run and verification scripts
+├── tools/       C++ verification probe (test equipment, not the application)
 ├── docs/        Design notes, investigations and verification records
-├── models/      Generated TensorRT engines (git-ignored) + rationale
+├── models/      Generated TensorRT engines and metadata dumps (git-ignored)
 └── media/       Video sources are read from DeepStream, never committed
 ```
 
@@ -267,6 +325,7 @@ capabilities this clip did **not** exercise.
 | Inference pipeline | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md) |
 | The OSD ghosting investigation | [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md) |
 | Object tracking | [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md) |
+| Restricted-zone analytics | [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md) |
 | Engineering roadmap and decisions | [`PLAN.md`](PLAN.md) |
 
 Each document records not just what was built but **why**, along with the
@@ -274,8 +333,8 @@ verification evidence and an explicit statement of what remains unproven.
 
 ## Roadmap
 
-Person detection and tracking work end to end. Restricted-zone analytics is next,
-followed by containerisation and deployment — see [`PLAN.md`](PLAN.md).
+Detection, tracking and restricted-zone monitoring work end to end.
+Containerisation and deployment are next — see [`PLAN.md`](PLAN.md).
 
 ## Third-party assets
 

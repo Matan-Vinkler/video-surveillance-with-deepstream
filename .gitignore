@@ -35,5 +35,14 @@ models/tracks/
 models/tracks_terminated/
 models/tracks_shadow/
 
-# Python bytecode cache from scripts/analyze_tracks.py
+# Per-frame restricted-zone evidence, written by the verification probe rather
+# than by deepstream-app. Regenerated on every run; never committed.
+models/zone/
+
+# Compiled verification tooling. tools/analytics_probe.cpp is committed; the
+# binary is a build artifact, is machine-specific, and is rebuilt on demand by
+# scripts/ds_common.sh.
+build/
+
+# Python bytecode cache from the analysis scripts
 __pycache__/

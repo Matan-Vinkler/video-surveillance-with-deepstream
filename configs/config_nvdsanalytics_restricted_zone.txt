@@ -1,0 +1,67 @@
+# nvdsanalytics: one restricted zone, Milestone 5 checkpoint 3.
+#
+# This is the only configuration in this repository that is genuinely OUR
+# application logic rather than a vendor file used as shipped. A restricted zone
+# is a property of the installation -- a doorway, a platform edge, a fenced area
+# -- not a property of the images, which is exactly why it belongs here and not
+# in the detector.
+#
+# Scope: ROI occupancy only. No line crossing, no overcrowding, no direction
+# detection. Full record: docs/milestone-05-restricted-zone.md
+
+[property]
+enable=1
+
+# The reference resolution the coordinates below are expressed in. Every ROI
+# point is rescaled by (surface_width / config-width) when the analytics context
+# is created (nvds_analytics.cpp:271-280). Our nvstreammux outputs 1920x1080, so
+# the scale factor here is exactly 1.0 and the numbers below are literal pixels.
+config-width=1920
+config-height=1080
+
+# 0: draw nothing  1: ROI outlines and labels  2: the above plus live counts.
+# NOTE: only the FRAME-level drawing survives. nvdsanalytics also appends
+# " ROI:RF" to each object's label and inverts its box colour, but
+# deepstream-app's process_meta frees display_text and resets border_color
+# further downstream, so per-object indications never reach the screen.
+osd-mode=2
+display-font-size=14
+
+# obj-cnt-win-in-ms is deliberately left unset (default 50). Despite its name it
+# is used as a FRAME COUNT for the per-object history window, not milliseconds,
+# and that history is what smooths the box height used to place the ROI test
+# point. Left at the default rather than tuned.
+
+[roi-filtering-stream-0]
+enable=1
+
+# The restricted zone: a rectangle x=[650,1260], y=[640,820], given as a 4-point
+# polygon ordered clockwise from the top-left. The key accepts any simple
+# polygon -- a trapezoid would be the natural shape on a real ground plane, but
+# this scene has the subject at roughly constant depth.
+#
+# These coordinates are DERIVED, not chosen. They come from the measured track
+# of the walker in sample_walk.mov, evaluated with the same test point
+# nvdsanalytics actually uses:
+#
+#     (left + width/2,  top + height/2 + mean_height/2)
+#
+# which is approximately the FEET, not the centroid (nvds_analytics.cpp:600).
+# The zone is placed so the subject:
+#   - is outside for frames  44..108
+#   - enters at frame        109
+#   - stays inside for       75 frames (2.50 s), one contiguous run
+#   - exits after frame      183
+#   - remains visible for    90 more frames
+#
+# The y band is chosen so the feet (707..755) fall inside while the centroid
+# (535..605) never does. That makes the reference point testable: the same ROI
+# yields 75 frames under the foot rule and 0 under a centroid rule.
+roi-RF=650;640;1260;640;1260;820;650;820
+
+# 0 = status set when the object is INSIDE the polygon.
+inverse-roi=0
+
+# Class 2 = person. Checked before the ROI test, so the rule genuinely does not
+# apply to other classes -- verified by re-running with class-id=0.
+class-id=2
