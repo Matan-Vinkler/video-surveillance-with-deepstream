@@ -363,8 +363,12 @@ nvinfer config and failed the whole run. It now rewrites the key for
    window, not milliseconds. Left at its default rather than tuned.
 6. **No performance claim.** `nvdsanalytics` adds work, and this pipeline's
    end-to-end throughput has never been measured.
-7. **On-screen confirmation is a human check.** No headless test covers what
-   `nvdsosd` draws, and per-object analytics indications never reach it (§9).
+7. **On-screen confirmation is a human check** (§14). No headless test covers
+   what `nvdsosd` draws.
+8. **The border-colour claim in §9 is read from source, not measured** — and is
+   now accepted rather than chased. The `RF=<count>` overlay is the on-screen
+   indication; recovering the per-object colour would mean working around
+   `deepstream-app`'s `process_meta`, which is not worth it for a redundant cue.
 
 ## 13. Completion criteria
 
@@ -385,4 +389,34 @@ nvinfer config and failed the whole run. It now rewrites the key for
 | Broken analytics config fails loudly | Done — exit 255 |
 | No line crossing / overcrowding / direction / messaging | Done — static check |
 | Checkpoints 1–2 and Milestone 2 regressions pass | Done — all exit 0 |
-| On-screen ROI rendering confirmed | **Not done** — needs a visible run |
+| On-screen ROI rendering confirmed | Done — counter tracks entry and exit (§14) |
+
+## 14. On-screen confirmation
+
+Everything above is metadata-level evidence. It proves `nvdsanalytics` computed
+the right verdict; it does not prove `nvdsosd` renders anything useful from it.
+Checkpoint 1 is the standing warning here: its automated suite passed in full
+while the output was visibly wrong.
+
+`./scripts/run_inference.sh` was run on the physically attached monitor. Reported:
+**`RF` changes to 1 when the person enters the restricted area, and back to 0
+when they leave.**
+
+That confirms the whole frame-level path end to end —
+`NvDsAnalyticsFrameMeta` → `NvDsDisplayMeta` → `nvdsosd` — and survives
+`deepstream-app`'s `process_meta`, which rewrites *object* metadata but never
+touches `frame_meta->display_meta_list` (§9). It also corroborates the headless
+result independently: the transitions a human saw on screen are the same two
+transitions the probe measured at frames 109 and 183.
+
+**What it does not settle, and why that is fine.** §9 predicts, from source,
+that the person's box does *not* change colour inside the zone, because
+`process_meta` runs on `nvdsosd`'s own sink pad and unconditionally resets
+`border_color` from the GIE config. That prediction remains **unobserved** —
+neither confirmed nor refuted — and is recorded as such rather than quietly
+upgraded by the run above.
+
+**The counter is accepted as the on-screen indication.** Chasing the per-object
+colour would mean working around `deepstream-app`'s `process_meta`, and it would
+buy a second, redundant cue for a state the counter already shows and the
+metadata already proves. Not pursued.
