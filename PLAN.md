@@ -29,6 +29,7 @@ Target end state, and where the work currently sits:
 ```
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
    [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]    [DONE M5.3]      [M9]
+             all of the above now also runs containerised  [DONE M6]
        │                │               │              │             │
   DeepStream:      TrafficCamNet FP16   NvSORT via   restricted   monitoring,
   source ! decoder   TensorRT engine    nvtracker    zone via     logging
@@ -48,7 +49,8 @@ on-screen bounding boxes (M5 checkpoint 1), those detections carry a persistent
 `object_id` (M5 checkpoint 2), and the application now determines whether that
 tracked person is inside a restricted zone (M5 checkpoint 3).
 
-**Milestone 5 is complete.** Next is containerisation and deployment.
+**Milestones 5 and 6 are complete.** The application now runs containerised,
+with detector and tracker metadata byte-identical to the host-native run.
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
@@ -68,8 +70,8 @@ learning progress (§7) is tracked separately.
 - [x] **3. Select Pretrained Model**
 - [x] **4. Optimize Model using TensorRT**
 - [x] **5. Build DeepStream Inference Pipeline**
-- [ ] **6. Containerize the Application** ← next
-- [ ] **7. Deploy Inference with Triton Inference Server**
+- [x] **6. Containerize the Application**
+- [ ] **7. Deploy Inference with Triton Inference Server** ← next (blocked, see §10)
 - [ ] **8. Deploy on Edge Device (Jetson)**
 - [ ] **9. Monitoring and Logging**
 - [ ] **10. Final Report and Deliverables**
@@ -81,8 +83,8 @@ learning progress (§7) is tracked separately.
 | 3 | Select Pretrained Model | Complete | [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md) |
 | 4 | Optimize Model using TensorRT | Complete | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md), [`docs/milestone-04-inspection.md`](docs/milestone-04-inspection.md) |
 | 5 | Build DeepStream Inference Pipeline | **Complete** — all 3 checkpoints | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md), [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md), [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md), [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md), [`docs/milestone-05-inspection.md`](docs/milestone-05-inspection.md) |
-| 6 | Containerize the Application | Not started | — |
-| 7 | Deploy Inference with Triton | Not started | — |
+| 6 | Containerize the Application | **Complete** | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
+| 7 | Deploy Inference with Triton | Not started — **blocked**, see §10 | — |
 | 8 | Deploy on Edge Device (Jetson) | Not started | — |
 | 9 | Monitoring and Logging | Not started | — |
 | 10 | Final Report and Deliverables | Not started | — |
@@ -91,7 +93,20 @@ learning progress (§7) is tracked separately.
 
 ## 4. Current milestone
 
-**Milestone 5 is complete. All 3 checkpoints are done.**
+**Milestone 6 is complete.** The application is containerised and verified
+against the host-native baseline: **0 of 288 per-frame files differ** in both the
+detector and tracker dumps, and the restricted-zone result is unchanged (entry
+109, 75 frames, exit 183). Full record:
+[`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md).
+
+The one deliberate deviation is recorded there in full: the container's
+TensorRT was upgraded 10.16.1 → 10.16.2 to match the host, so the existing FP16
+engine is reused rather than a second one built. That is what makes a
+byte-identical comparison possible at all.
+
+---
+
+### Milestone 5 (complete, all 3 checkpoints)
 
 | # | Checkpoint | Status |
 |---|---|---|
@@ -353,6 +368,28 @@ related but not identical.
 - [x] Bounding a known divergence instead of absorbing it into a tolerance
 - [x] Why zone logic is application configuration rather than a model capability
 
+**From Milestone 6 — Containerisation**
+
+- [x] Jetson container runtime uses **CSV mode**, injecting device nodes and
+      driver libraries — but neither DeepStream nor TensorRT, which must come
+      from the image
+- [x] That the NVIDIA runtime supplies GPU, NVDEC, VIC and display without
+      `--privileged`, `--device` or `--gpus`
+- [x] That `docker build` runs **without** that runtime, so no DeepStream plugin
+      can be inspected at build time
+- [x] TensorRT plan files are version-locked, while DeepStream links TensorRT by
+      **major soname only** — the difference between ABI compatibility and
+      engine compatibility
+- [x] Reading `apt-cache policy` origins and priorities to prove two packages are
+      the same artifact from the same repository
+- [x] `apt-get -s` as a way to prove an upgrade removes nothing, before doing it
+- [x] Why a metapackage with exact-version dependencies forces an atomic upgrade
+- [x] Overriding, then restoring, a vendor `apt-mark hold`
+- [x] X11 authorisation by local uid (`SI:localuser:`) versus by MIT cookie, and
+      why that makes `--user` the narrowest container display method
+- [x] Asserting container privilege from the live `HostConfig` rather than by
+      grepping one's own scripts
+
 ---
 
 ## 8. Key engineering decisions
@@ -397,6 +434,13 @@ related but not identical.
 | **A purpose-built C++ probe** to read analytics metadata | `deepstream-app` never reads `NVDS_USER_*_META_NVDSANALYTICS`, `nvmsgconv` does not carry it, `pyds` is absent, and the shipped analytics sample forces NvDCF and a display. Every shipped route was checked before writing code ([detail](docs/milestone-05-restricted-zone.md) §5) | 5 | Active |
 | The probe is **cross-checked, not trusted** | Its detector output must be bit-identical to `deepstream-app`'s or its analytics evidence is rejected. Test equipment that cannot be audited is not evidence | 5 | Active |
 | `operate-on-class-ids` rejected as a "fix" for the probe divergence | It made object counts agree by disabling the tracker's removal path, while the retained objects still carried `UNTRACKED_OBJECT_ID` — hiding the difference rather than resolving it | 5 | Active |
+| Base image `deepstream:9.1-samples-multiarch`, pinned by tag and digest | arm64-verified, ships DeepStream 9.1.0 with the same GCID as the host, plus the tracker assets and a byte-identical `sample_walk.mov`. `-triton-multiarch` rejected: far larger and drags in out-of-scope Triton | 6 | Active |
+| **Container TensorRT upgraded 10.16.1 → 10.16.2** | The milestone's claim is "containerisation changed nothing", which is only provable if the inference library and engine file are identical on both sides. Building a second engine with a different TensorRT would change the inference stack itself ([detail](docs/milestone-06-containerization.md) §3) | 6 | Active |
+| The seven TensorRT packages re-`apt-mark hold`ed at the new version | Preserves NVIDIA's intent that they not drift, rather than abandoning the pin | 6 | Active |
+| Engine bind-mounted **read-only**, never copied into the image | Machine-specific artifact; a read-only mount also makes a silent rebuild physically impossible, on top of the existing `onnx-file` omission | 6 | Active |
+| No Python TensorRT bindings, dev packages or `trtexec` in the image | The container never resolves the engine's *name* — it follows the host-maintained stable symlink. `ensure_engine_link()` stays on the host | 6 | Active |
+| Element checks moved from build time to run time | `docker build` gets no NVIDIA CSV injection, so no DeepStream plugin can load during a build ([detail](docs/milestone-06-containerization.md) §6) | 6 | Active |
+| Visible container runs as uid 1000, not via `xhost +` | Display `:1` authorises by local uid (`SI:localuser:matan`), not by cookie, so running as that uid needs **no host X11 change at all** | 6 | Active |
 
 ---
 
@@ -448,6 +492,9 @@ Off the critical path; recorded so they do not become scope.
   were all recorded as NOT EXERCISED ([detail](docs/milestone-05-tracking.md) §6).
   Testing them needs the crowded source or a real camera. Open a separate
   experiment, or accept the gap until the input changes?
+- **Visible playback inside the container is unverified.** The headless path is
+  fully machine-checked; the on-screen path needs a human run, exactly as in
+  Milestone 5. `./scripts/run_container.sh --display` when you want it.
 - **IOU was never run head to head.** NvSORT was chosen from the shipped
   configurations rather than from a measurement on this clip. The comparison is a
   one-line config change if the choice is ever questioned.
@@ -465,3 +512,5 @@ Off the critical path; recorded so they do not become scope.
 | Rendering correctness needs a human | Medium — the automated suite passed while output was visibly wrong. No headless check covers OSD drawing | If visible regressions recur; would need frame capture and comparison |
 | A bad `ll-config-file` silently substitutes a different tracker backend | Medium — DeepStream only warns and falls back to defaults, so every other check would still pass. Guarded by asserting the warning is absent ([detail](docs/milestone-05-tracking.md) §7) | If more vendor configs are referenced by path; the same guard would be needed per file |
 | The `[tracker]` group is duplicated across two app configs | Low — `deepstream-app` has no include mechanism, and keeping the two configs readable side by side was judged worth the duplication | If a third app config appears, or the groups drift |
+| The container image is a **custom artifact**, not NVIDIA's shipped one | Medium — supported as a software combination on this device, unsupported as an image. Overriding a vendor `apt-mark hold` is deliberate and documented | If NVIDIA ships a Jetson image already carrying TensorRT 10.16.2, simplify the Dockerfile rather than leave the pin as archaeology |
+| Container image is 8.99 GB | Low — both TensorRT versions transit the layers | If image size becomes a deployment constraint (M8) |

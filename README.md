@@ -1,7 +1,8 @@
 # Video Surveillance with DeepStream
 
 **Real-time person detection, tracking and restricted-zone monitoring on an
-NVIDIA Jetson Orin Nano**, built from GStreamer, TensorRT and DeepStream.
+NVIDIA Jetson Orin Nano**, built from GStreamer, TensorRT and DeepStream, and
+runnable host-native or in a container.
 
 A recorded video is replayed as a simulated camera — paced in real time, not
 consumed as fast as the hardware allows — and every frame is run through a
@@ -54,8 +55,10 @@ no copy into system memory anywhere in the path.
 - **Draws bounding boxes, labels, track IDs and the zone outline** on screen.
 - **Emits per-frame metadata at three points** — detector, tracker and analytics
   — so correctness is asserted from data, never from "it looked right".
-- **Verifies itself headlessly**: three commands run the whole pipeline with no
-  display, check thirty-one properties of the result, and exit non-zero on failure.
+- **Runs in a container** with the same behaviour — detector and tracker metadata
+  are byte-identical to the host-native run, on all 288 frames.
+- **Verifies itself headlessly**: four commands run the whole pipeline with no
+  display, check forty-three properties of the result, and exit non-zero on failure.
 
 ## Results
 
@@ -148,6 +151,11 @@ The DeepStream version is discovered at run time through the
 
 # 4. Watch it, if a display is attached
 ./scripts/run_inference.sh
+
+# 5. Or run the whole thing in a container
+./scripts/run_container.sh --build
+./scripts/run_container.sh --headless
+./scripts/verify_container.sh       # proves the container changed nothing
 ```
 
 If `DISPLAY` is unset in your shell but a desktop session is running on the
@@ -169,6 +177,15 @@ The window opens on the physically attached monitor, not in an SSH client.
 | `./scripts/verify_inference.sh` | Headless detection run with eight machine-checked assertions |
 | `./scripts/verify_tracking.sh` | Headless tracking run: four pipelines, nine checks, and a full identity report |
 | `./scripts/verify_zone.sh` | Headless zone run: five pipelines, fourteen checks, and an occupancy report |
+
+**Container**
+
+| Command | What it does |
+|---|---|
+| `./scripts/run_container.sh --build` | Builds the image; fails the build if the TensorRT pin did not take |
+| `./scripts/run_container.sh --headless` | Runs the pipeline in a container, writing its metadata to the host |
+| `./scripts/run_container.sh --display` | Visible playback from the container on the physical monitor |
+| `./scripts/verify_container.sh` | Twelve checks, diffing container output against a fresh host-native baseline |
 
 **Model and engines**
 
@@ -279,6 +296,19 @@ dumps, so a passing run is a statement about data rather than about appearance.
    and every other check would still pass.
 9. No analytics yet.
 
+**`./scripts/verify_container.sh` — containerisation.** A host-native baseline
+run, two container runs, a facts pass and a negative control; twelve checks. The
+decisive two: the container's **detector and tracker metadata differ from the
+host run on 0 of 288 per-frame files**. Not "equivalent within tolerance" —
+byte-identical, against a baseline captured in the same script run.
+
+That is only provable because the container's TensorRT was deliberately upgraded
+from the shipped 10.16.1 to the host's 10.16.2, so both sides load the *same*
+engine file. Building a second engine with a different TensorRT would have made
+any difference unattributable. The reasoning, the evidence gathered before doing
+it, and the cost (it makes the image a custom artifact) are in
+[`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md).
+
 It also prints a full identity report: per-track lifespans, the longest
 continuous track, when the track was established, and an explicit list of the
 capabilities this clip did **not** exercise.
@@ -307,6 +337,7 @@ fourteen checks:
 ## Project structure
 
 ```
+├── Dockerfile   Derived DeepStream image (see docs/milestone-06-containerization.md)
 ├── configs/     DeepStream application, nvinfer and restricted-zone configuration
 ├── scripts/     Inspection, build, run and verification scripts
 ├── tools/       C++ verification probe (test equipment, not the application)
@@ -326,6 +357,7 @@ fourteen checks:
 | The OSD ghosting investigation | [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md) |
 | Object tracking | [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md) |
 | Restricted-zone analytics | [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md) |
+| Containerisation | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
 | Engineering roadmap and decisions | [`PLAN.md`](PLAN.md) |
 
 Each document records not just what was built but **why**, along with the
@@ -333,8 +365,8 @@ verification evidence and an explicit statement of what remains unproven.
 
 ## Roadmap
 
-Detection, tracking and restricted-zone monitoring work end to end.
-Containerisation and deployment are next — see [`PLAN.md`](PLAN.md).
+Detection, tracking and restricted-zone monitoring work end to end, host-native
+and containerised. Triton and edge deployment are next — see [`PLAN.md`](PLAN.md).
 
 ## Third-party assets
 

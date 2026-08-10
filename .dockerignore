@@ -1,0 +1,35 @@
+# Keep the build context small and keep machine-specific artifacts OUT of the
+# image. Everything excluded here is either regenerated, mounted at run time, or
+# irrelevant to running the application.
+
+# TensorRT engines and every generated metadata dump. The engine in particular
+# must NEVER enter the image: it is a machine-specific artifact bound to one
+# TensorRT version and GPU, and baking it in would pin the image to one build
+# and contradict the standing rule that engines are regenerated, never shipped.
+# It is bind-mounted read-only at run time instead.
+models/
+
+# Compiled verification tooling. tools/analytics_probe.cpp is copied in and
+# rebuilt inside the image; a host-built binary must not leak in.
+build/
+
+# Not needed to run anything.
+docs/
+media/
+.git/
+.gitignore
+.claude/
+*.md
+!README.md
+
+# Docker's own files
+Dockerfile
+.dockerignore
+
+# Editor and OS cruft
+*~
+*.swp
+*.log
+*.dot
+__pycache__/
+.DS_Store
