@@ -392,3 +392,9 @@ place and used unmodified — copying it into this repository would silently for
 vendor file that can drift. They are covered by the DeepStream SDK
 licence, not by this project. See [`media/README.md`](media/README.md) and
 [`models/README.md`](models/README.md).
+
+## Licence
+
+The code and documentation in this repository are released under the MIT
+Licence — see [`LICENSE`](LICENSE). This covers only what this repository
+contains; the third-party assets above remain under their own terms.
