@@ -361,6 +361,7 @@ fourteen checks:
 
 | Topic | Document |
 |---|---|
+| Use case definition and AI-task choice | [`docs/milestone-01-use-case.md`](docs/milestone-01-use-case.md) |
 | Video input and real-time pacing | [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md) |
 | Model selection and DetectNet_v2 internals | [`docs/milestone-03-model-selection.md`](docs/milestone-03-model-selection.md) |
 | TensorRT optimisation and benchmarks | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md) |

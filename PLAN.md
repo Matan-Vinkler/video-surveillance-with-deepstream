@@ -235,7 +235,9 @@ Out of scope until explicitly opened: Triton, Docker, MQTT, monitoring.
 - Chose the scenario because it aligns naturally with the later DeepStream,
   TensorRT, tracking and Triton milestones
 
-*Predates this repository; no artifacts committed.*
+*Predates this repository; produced no code artifacts.* Documented
+retrospectively from the original discussion:
+[`docs/milestone-01-use-case.md`](docs/milestone-01-use-case.md).
 
 ### Milestone 2 — Collect or Simulate Video Input
 
