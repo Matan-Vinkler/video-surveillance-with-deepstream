@@ -39,6 +39,11 @@ models/tracks_shadow/
 # than by deepstream-app. Regenerated on every run; never committed.
 models/zone/
 
+# The Triton model repository's ENTRY (config.pbtxt) is committed -- it is
+# application configuration. The model artifact under it is not: model.plan is
+# the machine-specific FP16 engine, bind-mounted read-only at run time.
+models/triton_model_repo/*/*/model.plan
+
 # Compiled verification tooling. tools/analytics_probe.cpp is committed; the
 # binary is a build artifact, is machine-specific, and is rebuilt on demand by
 # scripts/ds_common.sh.

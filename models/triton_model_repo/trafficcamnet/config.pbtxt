@@ -1,0 +1,66 @@
+# Triton model repository entry for TrafficCamNet, Milestone 7.
+#
+# This describes the EXISTING Milestone 4 FP16 engine to Triton. No model is
+# built, converted or retrained here: `1/model.plan` is the host-built engine,
+# bind-mounted read-only at run time. Reusing the byte-identical engine is what
+# makes "only the inference-serving layer changed" a provable claim rather than
+# an assertion -- the same argument Milestone 6 rested on.
+#
+# Every field below is derived from measurement, not copied blindly:
+#   - the tensor names and shapes match NVIDIA's own reference entry for this
+#     model (samples/triton_model_repo/Primary_Detector/config.pbtxt), which is
+#     TrafficCamNet
+#   - the input shape matches what Milestone 4 actually built:
+#     min = opt = max = 1x3x544x960
+#   - the output shapes match the engine's final bindings, output_cov and
+#     output_bbox, recorded in docs/milestone-04-tensorrt-optimization.md
+#
+# Full record: docs/milestone-07-triton.md
+
+name: "trafficcamnet"
+
+# The engine is a serialized TensorRT plan, so Triton's tensorrt backend loads
+# it directly. It does NOT build anything.
+platform: "tensorrt_plan"
+
+# 1, NOT the 30 of NVIDIA's sample. Our engine was built with a fixed
+# optimisation profile (min = opt = max = 1); it physically cannot serve a
+# larger batch. If Triton rejects this value the run must stop and the exact
+# validation error be reported -- not silently changed.
+max_batch_size: 1
+
+default_model_filename: "model.plan"
+
+input [
+  {
+    name: "input_1:0"
+    data_type: TYPE_FP32
+    format: FORMAT_NCHW
+    dims: [ 3, 544, 960 ]
+  }
+]
+
+# DetectNet_v2 has two heads and no in-graph NMS. nvinferserver locates these
+# by SUBSTRING -- "cov" and "bbox" -- so the names matter
+# (infer_postprocess.cpp:618-625). Both must be FP32: the built-in parser
+# rejects any other datatype.
+output [
+  {
+    name: "output_cov/Sigmoid:0"
+    data_type: TYPE_FP32
+    dims: [ 4, 34, 60 ]
+  },
+  {
+    name: "output_bbox/BiasAdd:0"
+    data_type: TYPE_FP32
+    dims: [ 16, 34, 60 ]
+  }
+]
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+    gpus: 0
+  }
+]

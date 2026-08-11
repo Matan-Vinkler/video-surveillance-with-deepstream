@@ -30,16 +30,22 @@ Target end state, and where the work currently sits:
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
    [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]    [DONE M5.3]      [M9]
              all of the above now also runs containerised  [DONE M6]
+             and is served through in-process Triton       [DONE M7]
        │                │               │              │             │
   DeepStream:      TrafficCamNet FP16   NvSORT via   restricted   monitoring,
   source ! decoder   TensorRT engine    nvtracker    zone via     logging
-  ! nvstreammux      via nvinfer        -> object_id nvdsanalytics
-  ! nvinfer          -> NvDsObjectMeta               -> in/out
-  ! nvtracker
+  ! nvstreammux      via nvinfer  (M6)  -> object_id nvdsanalytics
+  ! nvinfer          or nvinferserver                -> in/out
+    or nvinferserver   -> Triton -> TensorRT   (M7)
+  ! nvtracker        -> NvDsObjectMeta
   ! nvdsanalytics
   ! nvmultistreamtiler
   ! nvdsosd ! sink
 ```
+
+Both serving paths remain runnable from the same scripts: `--triton` selects
+`nvinferserver` + in-process Triton, and without it every mode is the Milestone 6
+`nvinfer` path.
 
 Currently implemented: **the full detection → tracking → restricted-zone path**.
 A recorded video is replayed as a simulated camera (M2), TrafficCamNet was
@@ -49,14 +55,19 @@ on-screen bounding boxes (M5 checkpoint 1), those detections carry a persistent
 `object_id` (M5 checkpoint 2), and the application now determines whether that
 tracked person is inside a restricted zone (M5 checkpoint 3).
 
-**Milestones 5 and 6 are complete.** The application now runs containerised,
-with detector and tracker metadata byte-identical to the host-native run.
+**Milestones 5, 6 and 7 are complete.** The application runs containerised, with
+detector and tracker metadata byte-identical to the host-native run (M6), and
+inference is now served through `nvinferserver` and in-process Triton around the
+same FP16 engine, with detection structure, tracking and restricted-zone
+behaviour all preserved (M7).
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
 Inference pipeline: [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md).
 Tracking: [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md).
 Restricted zone: [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md).
+Containerisation: [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md).
+Triton serving: [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md).
 
 ---
 
@@ -71,8 +82,8 @@ learning progress (§7) is tracked separately.
 - [x] **4. Optimize Model using TensorRT**
 - [x] **5. Build DeepStream Inference Pipeline**
 - [x] **6. Containerize the Application**
-- [ ] **7. Deploy Inference with Triton Inference Server** ← next (blocked, see §10)
-- [ ] **8. Deploy on Edge Device (Jetson)**
+- [x] **7. Deploy Inference with Triton Inference Server**
+- [ ] **8. Deploy on Edge Device (Jetson)** ← next
 - [ ] **9. Monitoring and Logging**
 - [ ] **10. Final Report and Deliverables**
 
@@ -84,8 +95,8 @@ learning progress (§7) is tracked separately.
 | 4 | Optimize Model using TensorRT | Complete | [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md), [`docs/milestone-04-inspection.md`](docs/milestone-04-inspection.md) |
 | 5 | Build DeepStream Inference Pipeline | **Complete** — all 3 checkpoints | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md), [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md), [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md), [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md), [`docs/milestone-05-inspection.md`](docs/milestone-05-inspection.md) |
 | 6 | Containerize the Application | **Complete** | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
-| 7 | Deploy Inference with Triton | Not started — **blocked**, see §10 | — |
-| 8 | Deploy on Edge Device (Jetson) | Not started | — |
+| 7 | Deploy Inference with Triton | **Complete** | [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) |
+| 8 | Deploy on Edge Device (Jetson) | Not started — **next** | — |
 | 9 | Monitoring and Logging | Not started | — |
 | 10 | Final Report and Deliverables | Not started | — |
 
@@ -93,16 +104,61 @@ learning progress (§7) is tracked separately.
 
 ## 4. Current milestone
 
-**Milestone 6 is complete.** The application is containerised and verified
-against the host-native baseline: **0 of 288 per-frame files differ** in both the
-detector and tracker dumps, and the restricted-zone result is unchanged (entry
-109, 75 frames, exit 183). Full record:
+**Milestone 7 is complete.** Inference is now served through `nvinferserver` and
+an **in-process Triton 2.68.0**, which uses its TensorRT backend to execute the
+*same* Milestone 4 FP16 engine — byte for byte, never rebuilt. There is no
+second process, no HTTP and no gRPC; the verification container still runs with
+`--network none`. `./scripts/verify_triton.sh` exits 0 with all checks passing,
+and the visible pipeline was confirmed by hand on the physical display. Full
+record: [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md).
+
+Application behaviour is preserved end to end: 288 frames, the same 230
+detecting frames, **0 mid-track ID switches**, a **224-frame** stable track over
+frames 50..273, and the restricted zone unchanged at **entry 109, 75 frames
+inside, exit 183** with **100.00%** analytics agreement.
+
+**One real difference was found and is not engineered away:** nvinfer and
+nvinferserver+Triton produced numerically different detector metadata around the
+same TensorRT engine, while preserving detection structure, tracking behavior,
+and restricted-zone behavior. Typical deviation is sub-pixel to ~1 px (max 14.11
+px, median 0.68 px on `top`); confidence differs by a median of 0.0142. The
+cause is **not attributed** — it was not isolated
+([detail](docs/milestone-07-triton.md) §7).
+
+Two consequences worth carrying forward:
+
+- **Byte-identity was retired as the acceptance criterion, on the record and
+  after measurement.** It remains the better *discovery* tool — it is what
+  surfaced the difference at all — but application semantics are what the
+  milestone needs to claim, so structure and analytics semantics are asserted
+  instead ([detail](docs/milestone-07-triton.md) §7).
+- **The Milestone 6 image was deleted for storage capacity**, so M7 is compared
+  against a frozen, hash-verified M6 capture rather than a live rerun. That is a
+  documented verification limitation, printed on every passing run
+  ([detail](docs/milestone-07-triton.md) §6).
+
+**Milestone 8 — Deploy on Edge Device (Jetson) — is next. Not yet opened.**
+
+---
+
+### Milestone 6 (complete)
+
+The application is containerised and verified against the host-native baseline:
+**0 of 288 per-frame files differ** in both the detector and tracker dumps, and
+the restricted-zone result is unchanged (entry 109, 75 frames, exit 183). Full
+record:
 [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md).
 
 The one deliberate deviation is recorded there in full: the container's
 TensorRT was upgraded 10.16.1 → 10.16.2 to match the host, so the existing FP16
 engine is reused rather than a second one built. That is what makes a
-byte-identical comparison possible at all.
+byte-identical comparison possible at all. Milestone 7 repeated the same
+deviation on its own base image, for the same reason.
+
+**The M6 image no longer exists on this machine** — it and its samples-multiarch
+base were deleted to make room for the Triton stack. `verify_container.sh` is
+unchanged and remains the M6 statement of record, but its last passing run
+predates that deletion.
 
 ---
 
@@ -249,8 +305,6 @@ Deliberately thin — detail is added when a milestone is opened.
 
 | № | Milestone | Expected focus |
 |---|---|---|
-| 6 | Containerize the Application | Reproducible image for the Jetson target |
-| 7 | Deploy with Triton | Model serving, `nvinferserver` |
 | 8 | Deploy on Edge Device | Standalone operation on the Jetson |
 | 9 | Monitoring and Logging | Metrics, event output, observability |
 | 10 | Final Report | Consolidated deliverables |
@@ -390,6 +444,34 @@ related but not identical.
 - [x] Asserting container privilege from the live `HostConfig` rather than by
       grepping one's own scripts
 
+**From Milestone 7 — Triton**
+
+- [x] That **Triton does not replace TensorRT** — TensorRT executes the network,
+      Triton serves and orchestrates models that may use it as a backend
+- [x] `nvinferserver` as DeepStream's Triton integration point, and that it is a
+      *different plugin* from `nvinfer` rather than a mode of it
+- [x] **In-process Triton via the C API** — one process, no daemon, no sockets,
+      selected purely by using `model_repo` instead of `grpc`
+- [x] Triton model-repository layout, `config.pbtxt`, and `strict_model_config`
+      as a way to make a mismatched plan fail loudly at load time
+- [x] That bounding-box parsing stays in DeepStream — Triton returns raw tensors
+      and knows nothing about detections
+- [x] Translating an `nvinfer` ini config into `nvinferserver` protobuf text
+      without redesigning any parameter
+- [x] That `max_batch_size` must match the engine's built optimisation profile,
+      not the vendor sample's value
+- [x] Mounting a file **onto** a path inside a read-only mount, and why a
+      zero-byte placeholder is required for runc to do it
+- [x] That changing the serving path can alter numerical output even with a
+      byte-identical engine
+- [x] Choosing byte-level comparison for **discovery** and semantic comparison
+      for **acceptance**, and recording the change of criterion rather than
+      quietly relaxing it
+- [x] Freezing and hash-sealing a baseline (`MANIFEST.sha256` + a fingerprint
+      over the manifest) so a comparison survives the loss of the image
+- [x] That a verification harness needs its own negative tests — three
+      false-passing checks were found and fixed in this milestone
+
 ---
 
 ## 8. Key engineering decisions
@@ -441,6 +523,14 @@ related but not identical.
 | No Python TensorRT bindings, dev packages or `trtexec` in the image | The container never resolves the engine's *name* — it follows the host-maintained stable symlink. `ensure_engine_link()` stays on the host | 6 | Active |
 | Element checks moved from build time to run time | `docker build` gets no NVIDIA CSV injection, so no DeepStream plugin can load during a build ([detail](docs/milestone-06-containerization.md) §6) | 6 | Active |
 | Visible container runs as uid 1000, not via `xhost +` | Display `:1` authorises by local uid (`SI:localuser:matan`), not by cookie, so running as that uid needs **no host X11 change at all** | 6 | Active |
+| **In-process** Triton (C API) rather than gRPC/HTTP | One process, no daemon, no port; the container still runs `--network none`, which is itself evidence nothing is served over a socket | 7 | Active |
+| Triton base image rather than enabling Triton on the host | The host route needs `sudo ./triton_backend_setup.sh`; the base image ships `libtritonserver.so` and `nvinferserver` loads there with 0 unmet deps | 7 | Active |
+| All **eighteen** TensorRT packages pinned together, not the seven runtime ones | `libnvinfer-dev` depends on `libnvinfer10` at an exact version, so a partial pin drags in TensorRT **11** from the SBSA repo ([detail](docs/milestone-07-triton.md) §4) | 7 | Active |
+| `max_batch_size: 1`, not the sample's 30 | The M4 engine was built with a fixed profile min = opt = max = 1 and physically cannot serve more | 7 | Active |
+| `strict_model_config: true` | A wrong tensor name or dimension fails loudly at load time instead of auto-completing into something unintended | 7 | Active |
+| Separate `verify_triton.sh` rather than extending `verify_container.sh` | M6's passing status is a statement about the nvinfer path and keeps meaning exactly that; M7 adds a claim rather than redefining one | 7 | Active |
+| Byte-identity retired as the M7 acceptance criterion, after measurement | Byte comparison is the better *discovery* tool and found the divergence; semantics are what the milestone must claim ([detail](docs/milestone-07-triton.md) §7) | 7 | Active |
+| M6 image deleted; comparison against a frozen hash-sealed baseline | Storage capacity — the Triton stack left no room to keep both. Recorded as a verification limitation, not an equivalent substitute ([detail](docs/milestone-07-triton.md) §6) | 7 | Active |
 
 ---
 
@@ -470,9 +560,17 @@ Off the critical path; recorded so they do not become scope.
   is the obvious next step. Tier 3 (absolute accuracy) is **blocked** — the sample
   clips ship unannotated and this project has no labelled ground truth. Run Tier 1
   as its own experiment, or fold it into M5?
-- **Triton is unusable on this machine** — `libtritonserver.so` is absent and
-  `triton_backend_setup.sh` needs root. M7 assumes a capability that does not
-  currently exist. Resolve before opening M7.
+- ~~**Triton is unusable on this machine**~~ — answered: resolved by using the
+  `9.1-triton-multiarch` base image, which ships `libtritonserver.so` and the
+  `tensorrt` backend. `nvinferserver` loads there with **0** unmet dependencies,
+  so the host route needing `sudo ./triton_backend_setup.sh` was never taken.
+  See [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) §4.
+- **What causes the nvinfer vs nvinferserver numerical divergence?** Measured,
+  deterministic and reproducible across runs — sub-pixel to ~1 px typical, max
+  14.11 px — but **not isolated**, so no cause is attributed. Detection
+  structure, tracking and zone behaviour are all unaffected, so nothing depends
+  on the answer today. Isolating it would mean instrumenting the tensor path on
+  both sides ([detail](docs/milestone-07-triton.md) §7).
 - **The OSD ghosting mechanism is unproven.** The *variable* is isolated — a fresh
   buffer upstream of `nvdsosd` is required — but *why* in-place drawing persists
   across frames was not established
@@ -492,9 +590,12 @@ Off the critical path; recorded so they do not become scope.
   were all recorded as NOT EXERCISED ([detail](docs/milestone-05-tracking.md) §6).
   Testing them needs the crowded source or a real camera. Open a separate
   experiment, or accept the gap until the input changes?
-- **Visible playback inside the container is unverified.** The headless path is
-  fully machine-checked; the on-screen path needs a human run, exactly as in
-  Milestone 5. `./scripts/run_container.sh --display` when you want it.
+- ~~**Visible playback inside the container is unverified**~~ — answered for the
+  Triton path: run by hand on display `:1`, with the box, stable `person 1`
+  label, ROI rectangle, `RF` 0 → 1 → 0 transitions, absence of ghosting and
+  clean EOS all confirmed ([detail](docs/milestone-07-triton.md) §10). The M6
+  nvinfer display path was never given the same human run, and its image is now
+  gone.
 - **IOU was never run head to head.** NvSORT was chosen from the shipped
   configurations rather than from a measurement on this clip. The comparison is a
   one-line config change if the choice is ever questioned.
@@ -514,3 +615,6 @@ Off the critical path; recorded so they do not become scope.
 | The `[tracker]` group is duplicated across two app configs | Low — `deepstream-app` has no include mechanism, and keeping the two configs readable side by side was judged worth the duplication | If a third app config appears, or the groups drift |
 | The container image is a **custom artifact**, not NVIDIA's shipped one | Medium — supported as a software combination on this device, unsupported as an image. Overriding a vendor `apt-mark hold` is deliberate and documented | If NVIDIA ships a Jetson image already carrying TensorRT 10.16.2, simplify the Dockerfile rather than leave the pin as archaeology |
 | Container image is 8.99 GB | Low — both TensorRT versions transit the layers | If image size becomes a deployment constraint (M8) |
+| The M7 Triton image is **16.03 GB**, and with its base occupies ~71 GB of a 116 GB filesystem | **High for M8** — a rebuild measured free space falling to 14.48 GB, and the M6 image had to be deleted to make room | M8 opens; decide whether Triton's serving features justify ~1.8× the direct-inference image |
+| `verify_triton.sh` depends on `/home/matan/m6-baseline`, outside the repository | Medium — the M7 comparison is not reproducible on a clean machine, only re-runnable here | If the project must be verifiable from a fresh clone, or the baseline is lost |
+| No live M6 regression run accompanies the M7 result | Medium — M7 is compared against a frozen capture, not a live M6 rerun ([detail](docs/milestone-07-triton.md) §6) | If disk allows both images again, or M6 needs re-certifying |

@@ -57,6 +57,11 @@ struct Options {
   gchar *tracker_config = nullptr;
   gchar *analytics_config = nullptr;
   gchar *out_dir = nullptr;
+  /* "nvinfer" (Milestone 5/6) or "nvinferserver" (Milestone 7, in-process
+   * Triton). The SAME tool must be able to exercise either serving layer,
+   * because its whole purpose is comparing them -- forking it would mean
+   * comparing two different test instruments. */
+  gchar *infer_element = nullptr;
   gint tracker_width = 960;
   gint tracker_height = 544;
   gint mux_width = 1920;
@@ -286,6 +291,8 @@ main (int argc, char *argv[])
         "nvdsanalytics config", "PATH"},
     {"out-dir", 0, 0, G_OPTION_ARG_FILENAME, &opts.out_dir,
         "directory for per-frame output (must exist)", "DIR"},
+    {"inference-element", 0, 0, G_OPTION_ARG_STRING, &opts.infer_element,
+        "nvinfer (default) or nvinferserver", "NAME"},
     {"tracker-width", 0, 0, G_OPTION_ARG_INT, &opts.tracker_width,
         "tracker working width (default 960)", "N"},
     {"tracker-height", 0, 0, G_OPTION_ARG_INT, &opts.tracker_height,
@@ -319,6 +326,31 @@ main (int argc, char *argv[])
     return 1;
   }
 
+  if (!opts.infer_element)
+    opts.infer_element = g_strdup ("nvinfer");
+  /* BOTH elements take config-file-path. gst-inspect-1.0, in the Milestone 7
+   * image:
+   *     nvinfer:        config-file-path : Path to the configuration file ...
+   *     nvinferserver:  config-file-path : Path to the configuration file ...
+   *
+   * An earlier version of this file used "config-file" for nvinferserver and
+   * failed at pipeline construction with
+   *     no property "config-file" in element "nvinferserver"
+   * That name is real, but it belongs to a DIFFERENT namespace: `config-file=`
+   * is the deepstream-app *config key* under [primary-gie] (which is what
+   * configs/deepstream_app_walk_triton.txt correctly uses). The GStreamer
+   * element *property* is config-file-path for both. The two namespaces are
+   * easy to conflate and the element only tells you at run time.
+   *
+   * So the element name is the only thing that varies, which is precisely the
+   * property this milestone is testing. */
+  if (g_strcmp0 (opts.infer_element, "nvinfer")
+      && g_strcmp0 (opts.infer_element, "nvinferserver")) {
+    g_printerr ("ERROR: --inference-element must be 'nvinfer' or "
+        "'nvinferserver' (got '%s').\n", opts.infer_element);
+    return 1;
+  }
+
   gst_init (NULL, NULL);
 
   /* The same element chain deepstream-app builds, minus the OSD and the real
@@ -331,7 +363,7 @@ main (int argc, char *argv[])
       "dmx.video_0 ! queue ! h264parse ! nvv4l2decoder ! mux.sink_0 "
       "nvstreammux name=mux batch-size=1 width=%d height=%d "
       "live-source=0 batched-push-timeout=40000 ! "
-      "nvinfer name=pgie config-file-path=%s ! "
+      "%s name=pgie config-file-path=%s ! "
       /* Every property create_tracking_bin() sets, with the same values --
        * including the ones whose ELEMENT default differs from what
        * deepstream-app applies (notably tracking-id-reset-mode, which defaults
@@ -360,7 +392,7 @@ main (int argc, char *argv[])
       "nvmultistreamtiler rows=1 columns=1 width=%d height=%d ! "
       "fakesink name=sink sync=0",
       opts.video, opts.mux_width, opts.mux_height,
-      opts.infer_config,
+      opts.infer_element, opts.infer_config,
       opts.tracker_width, opts.tracker_height,
       opts.tracker_lib, opts.tracker_config,
       opts.analytics_config,

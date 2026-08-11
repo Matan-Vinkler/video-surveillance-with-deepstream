@@ -35,6 +35,12 @@ SHADOW_DIR="${SHADOW_DIR:-$REPO_ROOT/models/tracks_shadow}"
 # analytics metadata -- but by tools/analytics_probe.cpp. See
 # docs/milestone-05-restricted-zone.md
 ZONE_DIR="${ZONE_DIR:-$REPO_ROOT/models/zone}"
+
+# Milestone 7. The Triton model repository: its config.pbtxt is committed
+# application configuration, while 1/model.plan is the Milestone 4 engine,
+# bind-mounted read-only at run time and never copied or committed.
+TRITON_REPO_DIR="${TRITON_REPO_DIR:-$REPO_ROOT/models/triton_model_repo}"
+TRITON_MODEL_NAME="${TRITON_MODEL_NAME:-trafficcamnet}"
 PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/analytics_probe}"
 
 # The committed nvinfer config references a version-free engine name, so that no
@@ -110,6 +116,39 @@ require_probe() {
         || die "Could not build the analytics probe. Try: make -C tools"
     [[ -x "$PROBE_BIN" ]] \
         || die "'make -C tools' reported success but '$PROBE_BIN' is not executable."
+}
+
+require_triton_repo() {
+    local cfg="$TRITON_REPO_DIR/$TRITON_MODEL_NAME/config.pbtxt"
+    [[ -r "$cfg" ]] || die "The Triton model repository entry is missing:
+           $cfg"
+    [[ -d "$TRITON_REPO_DIR/$TRITON_MODEL_NAME/1" ]] \
+        || die "The Triton model version directory is missing:
+           $TRITON_REPO_DIR/$TRITON_MODEL_NAME/1
+       It must exist so the engine can be mounted onto 1/model.plan."
+
+    # The engine is bind-mounted onto 1/model.plan, INSIDE a model repository
+    # that is itself mounted read-only. Docker mounts parent before child, so by
+    # the time runc mounts the file the parent is already read-only and it cannot
+    # create the mountpoint:
+    #
+    #   error mounting "...engine" to rootfs at ".../1/model.plan": create
+    #   mountpoint for .../model.plan mount: read-only file system
+    #
+    # A zero-byte placeholder makes the mountpoint exist in the SOURCE tree, so
+    # runc only has to mount over it. The engine is never copied and the repo
+    # mount stays read-only. .gitignore excludes this path, so the placeholder is
+    # never committed and never masks a real engine.
+    local plan="$TRITON_REPO_DIR/$TRITON_MODEL_NAME/1/model.plan"
+    if [[ ! -e "$plan" ]]; then
+        : >"$plan" || die "Could not create the mountpoint placeholder: $plan"
+    elif [[ -s "$plan" ]]; then
+        die "'$plan' is a NON-EMPTY real file.
+       It should only ever be a zero-byte mountpoint placeholder; the engine is
+       bind-mounted over it at run time and never copied here. Refusing to
+       continue, because a real plan file here would silently be the model
+       Triton loads. Move it aside and re-run."
+    fi
 }
 
 expected_fp16_engine() {

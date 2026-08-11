@@ -1,0 +1,137 @@
+# Milestone 7 - the same application, served by IN-PROCESS Triton.
+#
+# Milestone 7 replaces ONE layer of the pipeline:
+#     nvinfer  ->  nvinferserver + Triton (C API, in-process)
+# The model, FP16 engine, thresholds, tracker, analytics geometry, tiler, OSD,
+# source and sink are the Milestone 6 ones, unchanged. No model is rebuilt.
+#
+# WHY A DIFFERENT BASE THAN MILESTONE 6
+# ------------------------------------
+# The samples image cannot serve Triton at all. Measured, in both the samples
+# image and on the host: libnvdsgst_inferserver.so ships, but has exactly one
+# unmet dependency --
+#     libtritonserver.so => not found
+# -- so `gst-inspect-1.0 nvinferserver` fails. The triton-multiarch image
+# carries Triton 2.68.0 at /opt/tritonserver with the tensorrt backend, and
+# nvinferserver loads there with zero unmet dependencies. Milestone 4 recorded
+# the host-side blocker for the same reason: the native Jetson route needs
+# `sudo ./triton_backend_setup.sh`, which this project does not use.
+#
+# THE SAME DELIBERATE TENSORRT DEVIATION AS MILESTONE 6
+# ----------------------------------------------------
+# This base also ships TensorRT 10.16.1.11, while the host -- and therefore our
+# FP16 engine -- is 10.16.2.10. Plan files are version-locked, so the engine
+# would not deserialize. We upgrade to match the host for exactly the reason
+# Milestone 6 did: behavioural equivalence is only provable if the inference
+# library AND the engine file are identical on both sides.
+#
+# TWO differences from Milestone 6 matter here, and the first one bit us.
+#
+# 1. This base ships EIGHTEEN TensorRT packages, not seven. The extra eleven are
+#    DEVELOPMENT packages (libnvinfer-dev, tensorrt-dev, the headers, and
+#    libnvinfer-bin) that the samples image does not carry. Pinning only the
+#    seven runtime packages is NOT enough: libnvinfer-dev depends on
+#    libnvinfer10 at an exact version, so forcing the runtime to 10.16.2 forces
+#    the dev packages to move too -- and their unpinned candidate is
+#    11.2.1.2-1+cuda13.3. A first attempt at this Dockerfile did exactly that
+#    and apt planned "18 upgraded, 7 newly installed", pulling a 2369 MB
+#    libnvinfer11 from the SBSA repo. The build was aborted before it landed.
+#    All eighteen are therefore pinned together, and a build-time assertion
+#    below fails if any version-11 package appears.
+#
+#    The dev packages are kept, not removed: removing them would be a second,
+#    unnecessary change to NVIDIA's image and risks a dependency cascade.
+#
+# 2. In this base the TensorRT packages are NOT apt-mark held (the samples image
+#    holds nine), so --allow-change-held-packages is a no-op here. It is kept so
+#    the instruction stays correct if a future base does hold them. We hold all
+#    eighteen afterwards regardless, so the pin exists at the version we chose.
+#
+# Note there is no `tensorrt-libs` here -- the samples image has it, this one has
+# `tensorrt-dev` instead. Only packages already present are upgraded; none is
+# added.
+#
+# Full record: docs/milestone-07-triton.md
+
+ARG BASE_IMAGE=nvcr.io/nvidia/deepstream:9.1-triton-multiarch
+FROM ${BASE_IMAGE}
+
+ARG TRT_VERSION=10.16.2.10-1+cuda13.2
+
+# The complete installed TensorRT family, exactly as found in this base -- all
+# eighteen, upgraded together. The dev packages carry exact-version dependencies
+# on the runtime ones, so any subset is unresolvable.
+ENV TRT_PKGS="libnvinfer10 libnvinfer-plugin10 libnvinfer-vc-plugin10 \
+libnvinfer-lean10 libnvinfer-dispatch10 libnvonnxparsers10 \
+libnvinfer-bin libnvinfer-dev libnvinfer-dispatch-dev libnvinfer-lean-dev \
+libnvinfer-plugin-dev libnvinfer-vc-plugin-dev libnvonnxparsers-dev tensorrt-dev \
+libnvinfer-headers-dev libnvinfer-headers-plugin-dev \
+libnvinfer-headers-python-plugin-dev libnvinfer-safe-headers-dev"
+
+RUN set -eux; \
+    apt-get update; \
+    pinned=""; for p in ${TRT_PKGS}; do pinned="$pinned $p=${TRT_VERSION}"; done; \
+    apt-get install -y --no-install-recommends --allow-change-held-packages $pinned; \
+    apt-mark hold ${TRT_PKGS}; \
+    rm -rf /var/lib/apt/lists/*
+
+# Fail the BUILD if the upgrade did not take, or if Triton is not intact.
+#
+# Package- and filesystem-level only, deliberately: `docker build` runs WITHOUT
+# the NVIDIA container runtime, so the host driver libraries it injects
+# (libnvbufsurface, libnvbufsurftransform, ...) do not exist here and any
+# DeepStream plugin linking them cannot be loaded. `gst-inspect-1.0
+# nvinferserver` therefore reports "No such element" at build time and works at
+# run time. Element availability is asserted by scripts/verify_triton.sh.
+RUN set -eux; \
+    n=0; \
+    for p in ${TRT_PKGS}; do \
+        v="$(dpkg-query -W -f='${Version}' "$p")"; \
+        test "$v" = "${TRT_VERSION}" || { echo "$p is $v, expected ${TRT_VERSION}"; exit 1; }; \
+        apt-mark showhold | grep -qx "$p" || { echo "$p was not held"; exit 1; }; \
+        n=$((n+1)); \
+    done; \
+    test "$n" = "18" || { echo "expected 18 pinned TensorRT packages, checked $n"; exit 1; }; \
+    # No TensorRT 11 may have crept in. This is the assertion that would have
+    # caught the aborted first attempt.
+    if dpkg-query -W -f='${Package} ${Status}\n' 2>/dev/null \
+         | grep -E '^(libnvinfer|libnvonnxparsers)[a-z-]*11 .*installed'; then \
+        echo "a TensorRT 11 package is installed; refusing to ship this image"; exit 1; \
+    fi; \
+    readlink -f /usr/lib/aarch64-linux-gnu/libnvinfer.so.10 | grep -q '10\.16\.2' \
+        || { echo "libnvinfer.so.10 does not resolve to 10.16.2"; exit 1; }; \
+    # DeepStream intact
+    test -x /usr/bin/deepstream-app; \
+    grep -q '^Version: 9\.1\.0' /opt/nvidia/deepstream/deepstream/version; \
+    # Triton intact -- this is what distinguishes this image from Milestone 6's
+    test -e /opt/tritonserver/lib/libtritonserver.so; \
+    test -d /opt/tritonserver/backends/tensorrt; \
+    test -e /opt/nvidia/deepstream/deepstream/lib/gst-plugins/libnvdsgst_inferserver.so; \
+    # The nvinferserver plugin must have NO unmet link-time dependency. This is
+    # the check that would have caught the samples image, and it works at build
+    # time because libtritonserver is in the image rather than injected.
+    ! ldd /opt/nvidia/deepstream/deepstream/lib/gst-plugins/libnvdsgst_inferserver.so \
+        | grep -q 'libtritonserver.so.*not found'
+
+WORKDIR /app
+
+# Layout mirrors the repository so the configs' relative paths resolve
+# unchanged: ../models/triton_model_repo and ../models/detections.
+COPY configs/ /app/configs/
+COPY scripts/ /app/scripts/
+COPY tools/   /app/tools/
+
+# Built in the image, as in Milestone 6.
+RUN set -eux; \
+    make -C /app/tools DS_ROOT=/opt/nvidia/deepstream/deepstream; \
+    test -x /app/build/analytics_probe
+
+# Mount points. The model repository is mounted rather than copied: its
+# config.pbtxt is committed, but 1/model.plan is the machine-specific engine.
+RUN mkdir -p /app/models/engines /app/models/detections /app/models/tracks \
+             /app/models/tracks_terminated /app/models/tracks_shadow \
+             /app/models/zone /app/models/triton_model_repo
+
+# The base entrypoint word-splits its arguments; cleared as in Milestone 6.
+ENTRYPOINT []
+CMD ["/bin/bash"]

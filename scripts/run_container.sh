@@ -12,6 +12,9 @@
 #   --display    visible playback on the physical monitor
 #   --shell      interactive shell with the same mounts
 #
+#   --triton     use the Milestone 7 in-process Triton image and configs.
+#                Without it, every mode is exactly the Milestone 6 nvinfer path.
+#
 # Every mount and runtime flag is printed before the container starts: nothing
 # important is hidden inside this script.
 #
@@ -29,21 +32,42 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ds_common.sh"
 
 IMAGE_NAME="${IMAGE_NAME:-video-surveillance-deepstream}"
-IMAGE_TAG="${IMAGE_TAG:-m6}"
-IMAGE="$IMAGE_NAME:$IMAGE_TAG"
 
+# --triton selects the Milestone 7 serving layer. It changes THREE things and
+# nothing else: the image, the Dockerfile it builds from, and the app config.
+# Without it every mode behaves exactly as it did in Milestone 6, so the M6 path
+# stays independently runnable and verifiable.
 MODE=""
+TRITON=0
 while (( $# > 0 )); do
     case "$1" in
         --build|--headless|--zone|--display|--shell)
             [[ -z "$MODE" ]] || die "Pick one mode, not '$MODE' and '$1'."
             MODE="$1" ;;
-        -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+        --triton) TRITON=1 ;;
+        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) die "Unknown option '$1'. Try --help." ;;
     esac
     shift
 done
 [[ -n "$MODE" ]] || die "No mode given. Try --help."
+
+if (( TRITON )); then
+    IMAGE_TAG="${IMAGE_TAG:-m7-triton}"
+    DOCKERFILE="$REPO_ROOT/Dockerfile.triton"
+    APP_CONFIG_NAME="deepstream_app_walk_triton.txt"
+    INFER_ELEMENT="nvinferserver"
+    INFER_CFG_NAME="config_inferserver_trafficcamnet.txt"
+    DISPLAY_CONFIG_NAME="deepstream_app_walk_triton_display.txt"
+else
+    IMAGE_TAG="${IMAGE_TAG:-m6}"
+    DOCKERFILE="$REPO_ROOT/Dockerfile"
+    APP_CONFIG_NAME="deepstream_app_walk_headless.txt"
+    INFER_ELEMENT="nvinfer"
+    INFER_CFG_NAME="config_infer_primary_trafficcamnet.txt"
+    DISPLAY_CONFIG_NAME="deepstream_app_walk_display.txt"
+fi
+IMAGE="$IMAGE_NAME:$IMAGE_TAG"
 
 # ------------------------------------------------------------- preflight ----
 require_docker() {
@@ -71,9 +95,9 @@ require_docker
 if [[ "$MODE" == "--build" ]]; then
     bold "== Building $IMAGE =="
     printf '  %-24s %s\n' "context" "$REPO_ROOT"
-    printf '  %-24s %s\n' "base" "nvcr.io/nvidia/deepstream:9.1-samples-multiarch"
+    printf '  %-24s %s\n' "dockerfile" "$DOCKERFILE"
     printf '  %-24s %s\n' "TensorRT pin" "10.16.2.10-1+cuda13.2 (deliberate: see the Dockerfile)"
-    docker build -t "$IMAGE" "$REPO_ROOT"
+    docker build -f "$DOCKERFILE" -t "$IMAGE" "$REPO_ROOT"
     bold "Built $IMAGE"
     docker image inspect "$IMAGE" --format '  size: {{.Size}} bytes   id: {{.Id}}'
     exit 0
@@ -104,6 +128,18 @@ COMMON_ARGS=(
     -v "$ZONE_DIR:/app/models/zone"
 )
 
+if (( TRITON )); then
+    # Two nested read-only mounts. The repository ENTRY (config.pbtxt) is
+    # committed and mounted with the tree; the model ARTIFACT is the Milestone 4
+    # engine, mounted straight onto 1/model.plan. Nothing is copied, and because
+    # both are :ro Triton physically cannot write an engine back.
+    require_triton_repo
+    COMMON_ARGS+=(
+        -v "$TRITON_REPO_DIR:/app/models/triton_model_repo:ro"
+        -v "$(readlink -f "$STABLE_ENGINE"):/app/models/triton_model_repo/trafficcamnet/1/model.plan:ro"
+    )
+fi
+
 show_and_run() {
     bold "== docker run =="
     printf '  %s\n' "docker run ${*}" | fold -s -w 100 | sed '2,$s/^/      /'
@@ -119,7 +155,7 @@ case "$MODE" in
         printf '  %-24s %s\n' "outputs" "$REPO_ROOT/models/{detections,tracks,zone}"
         info ""
         show_and_run "${COMMON_ARGS[@]}" --network none "$IMAGE" \
-            deepstream-app -c /app/configs/deepstream_app_walk_headless.txt
+            deepstream-app -c "/app/configs/$APP_CONFIG_NAME"
         ;;
 
     --zone)
@@ -127,7 +163,8 @@ case "$MODE" in
         show_and_run "${COMMON_ARGS[@]}" --network none "$IMAGE" \
             /app/build/analytics_probe \
               --video /opt/nvidia/deepstream/deepstream/samples/streams/sample_walk.mov \
-              --infer-config /app/configs/config_infer_primary_trafficcamnet.txt \
+              --infer-config "/app/configs/$INFER_CFG_NAME" \
+              --inference-element "$INFER_ELEMENT" \
               --tracker-lib /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so \
               --tracker-config /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml \
               --analytics-config /app/configs/config_nvdsanalytics_restricted_zone.txt \
@@ -182,6 +219,6 @@ case "$MODE" in
             --group-add "$VIDEO_GID" --group-add "$RENDER_GID" \
             -e HOME=/tmp -e GST_REGISTRY=/tmp/gst-registry.bin \
             "$IMAGE" \
-            deepstream-app -c /app/configs/deepstream_app_walk_display.txt
+            deepstream-app -c "/app/configs/$DISPLAY_CONFIG_NAME"
         ;;
 esac

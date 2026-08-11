@@ -1,0 +1,116 @@
+# nvinferserver: TrafficCamNet FP16 through IN-PROCESS Triton, Milestone 7.
+#
+# This is the nvinfer config translated, not redesigned. Milestone 7 replaces
+# only the inference-SERVING layer; the model, precision, thresholds, clustering
+# and class filter are the Milestone 5/6 values, unchanged.
+#
+# Format note: nvinferserver takes protobuf TEXT, not the key=value ini that
+# nvinfer uses. The file therefore looks nothing like
+# config_infer_primary_trafficcamnet.txt even though every parameter matches.
+#
+#   nvinfer (M5/M6)                     -> nvinferserver (M7)
+#   net-scale-factor=0.0039215686...    -> normalize { scale_factor: ... }
+#   model-color-format=0, process-mode=1-> TENSOR_ORDER_LINEAR, FULL_FRAME
+#   num-detected-classes=4              -> detection { num_detected_classes: 4 }
+#   cluster-mode=2 (NMS)                -> nms { ... }
+#   topk=20 / nms-iou-threshold=0.5     -> topk: 20 / iou_threshold: 0.5
+#   [class-attrs-all] pre-cluster=0.2   -> nms { confidence_threshold: 0.2 }
+#   [class-attrs-0]   pre-cluster=0.4   -> per_class_params { key: 0 ... 0.4 }
+#   labelfile-path=...                  -> postprocess { labelfile_path: ... }
+#
+# IN-PROCESS, not gRPC: `model_repo` selects Triton's C API, so Triton runs as a
+# LIBRARY inside deepstream-app. One process, no sockets, no ports, no daemon --
+# the container still runs with --network none. The gRPC alternative would
+# replace this block with `grpc { url: ... }` and require a second process.
+#
+# Full record: docs/milestone-07-triton.md
+
+infer_config {
+  unique_id: 1
+  gpu_ids: [0]
+
+  # The engine's optimisation profile is fixed at min = opt = max = 1.
+  max_batch_size: 1
+
+  backend {
+    # Tensor names must match the engine bindings and the model repository
+    # entry. nvinferserver's built-in DetectNet_v2 parser additionally locates
+    # the outputs by SUBSTRING ("cov" / "bbox"), so these names are load-bearing.
+    inputs: [ { name: "input_1:0" } ]
+    outputs: [
+      { name: "output_cov/Sigmoid:0" },
+      { name: "output_bbox/BiasAdd:0" }
+    ]
+
+    triton {
+      model_name: "trafficcamnet"
+      version: -1
+      model_repo {
+        # Relative to THIS file's directory. Mounted read-only at run time;
+        # 1/model.plan is the Milestone 4 engine, never rebuilt.
+        root: "../models/triton_model_repo"
+        # Require our config.pbtxt to describe the plan exactly. A wrong tensor
+        # name or dimension then fails at load time, loudly, instead of
+        # silently auto-completing into something we did not intend.
+        strict_model_config: true
+      }
+    }
+  }
+
+  preprocess {
+    network_format: MEDIA_FORMAT_NONE
+    tensor_order: TENSOR_ORDER_LINEAR
+    tensor_name: "input_1:0"
+    # Unset in nvinfer too. Milestone 5 recorded the resulting 1.778 -> 1.765
+    # aspect squash as a known limitation; preserving it is the point.
+    maintain_aspect_ratio: 0
+    frame_scaling_hw: FRAME_SCALING_HW_DEFAULT
+    frame_scaling_filter: 1
+    normalize {
+      # 1/255, identical to nvinfer's net-scale-factor.
+      scale_factor: 0.00392156862745098
+      channel_offsets: [0, 0, 0]
+    }
+  }
+
+  postprocess {
+    labelfile_path: "/opt/nvidia/deepstream/deepstream/samples/models/Primary_Detector/labels.txt"
+    detection {
+      num_detected_classes: 4
+
+      # No custom_parse_bbox_func: the BUILT-IN DetectNet_v2 parser is used.
+      # nvinferserver's DetectPostprocessor::parseBoundingBox
+      # (infer_postprocess.cpp:598) is the same algorithm nvinfer uses, down to
+      # the hardcoded bboxNorm = {35.0, 35.0} recorded in milestone-03. Parsing
+      # happens HERE, in DeepStream, after Triton returns raw tensors -- Triton
+      # itself knows nothing about bounding boxes.
+
+      # Class 2 is `person`; class 0 keeps its stricter stock threshold, exactly
+      # as [class-attrs-0] did under nvinfer.
+      per_class_params {
+        key: 0
+        value { pre_threshold: 0.4 }
+      }
+
+      # cluster-mode=2. The proto comments Nms as "reserved, not supported yet";
+      # that comment is STALE -- it is dispatched at infer_postprocess.cpp:322
+      # and :1096, and NVIDIA's own shipped config uses it.
+      nms {
+        confidence_threshold: 0.2
+        iou_threshold: 0.5
+        topk: 20
+      }
+    }
+  }
+
+  extra {
+    copy_input_to_host_buffers: false
+    output_buffer_pool_size: 2
+  }
+}
+
+input_control {
+  process_mode: PROCESS_MODE_FULL_FRAME
+  operate_on_gie_id: -1
+  interval: 0
+}

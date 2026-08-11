@@ -1,0 +1,7 @@
+# Triton model version directory.
+#
+# model.plan is NOT committed and is NOT copied into any image. It is the
+# Milestone 4 FP16 engine, bind-mounted read-only over this directory at run
+# time by scripts/run_container.sh. An engine is a machine-specific artifact
+# bound to one TensorRT version and GPU; committing one would be unusable
+# elsewhere and unverifiable here.

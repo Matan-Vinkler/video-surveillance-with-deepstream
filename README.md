@@ -187,6 +187,17 @@ The window opens on the physically attached monitor, not in an SSH client.
 | `./scripts/run_container.sh --display` | Visible playback from the container on the physical monitor |
 | `./scripts/verify_container.sh` | Twelve checks, diffing container output against a fresh host-native baseline |
 
+**Triton serving** — add `--triton` to any container mode to serve inference
+through `nvinferserver` and an in-process Triton instead of `nvinfer`. Without
+it, every mode is the Milestone 6 `nvinfer` path.
+
+| Command | What it does |
+|---|---|
+| `./scripts/run_container.sh --build --triton` | Builds the Triton image; asserts all 18 TensorRT packages are pinned and Triton is intact |
+| `./scripts/run_container.sh --headless --triton` | Runs the pipeline through in-process Triton, writing its metadata to the host |
+| `./scripts/run_container.sh --display --triton` | Visible Triton playback on the physical monitor |
+| `./scripts/verify_triton.sh` | Eleven checks, comparing the Triton run against a frozen, hash-verified Milestone 6 baseline |
+
 **Model and engines**
 
 | Command | What it does |
@@ -358,6 +369,7 @@ fourteen checks:
 | Object tracking | [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md) |
 | Restricted-zone analytics | [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md) |
 | Containerisation | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
+| Triton serving | [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) |
 | Engineering roadmap and decisions | [`PLAN.md`](PLAN.md) |
 
 Each document records not just what was built but **why**, along with the
@@ -365,8 +377,9 @@ verification evidence and an explicit statement of what remains unproven.
 
 ## Roadmap
 
-Detection, tracking and restricted-zone monitoring work end to end, host-native
-and containerised. Triton and edge deployment are next — see [`PLAN.md`](PLAN.md).
+Detection, tracking and restricted-zone monitoring work end to end, host-native,
+containerised, and served through in-process Triton. Edge deployment is next —
+see [`PLAN.md`](PLAN.md).
 
 ## Third-party assets
 

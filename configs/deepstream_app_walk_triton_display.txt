@@ -1,0 +1,114 @@
+# deepstream-app: VISIBLE playback with IN-PROCESS TRITON, Milestone 7.
+# Identical to deepstream_app_walk_display.txt apart from the two [primary-gie]
+# lines that select nvinferserver. See docs/milestone-07-triton.md
+#
+#   file source -> decoder -> nvstreammux -> nvinfer -> nvtracker
+#                -> nvmultistreamtiler -> nvdsosd -> nv3dsink
+#
+# Identical to deepstream_app_walk_headless.txt except for the sink, the pacing
+# and the metadata dumps (this config writes none). This opens a window on the
+# physically attached monitor. Run it through scripts/run_inference.sh, which
+# checks for a usable display first.
+#
+# No analytics, no secondary inference.
+
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=5
+
+# A 1x1 tiler. Not needed to *tile* anything -- there is one source -- but
+# required for correct OSD rendering. Without it, nvdsosd draws into a buffer it
+# received by reference and previous frames' boxes persist as a visible trail.
+# The tiler composites into a fresh buffer, which removes the artifact while
+# keeping the GPU draw path (process-mode is left at its GPU default).
+# Full experiment and evidence: docs/milestone-05-osd-ghosting.md
+[tiled-display]
+enable=1
+rows=1
+columns=1
+width=1920
+height=1080
+gpu-id=0
+nvbuf-memory-type=0
+
+[source0]
+enable=1
+type=2
+uri=file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_walk.mov
+gpu-id=0
+cudadec-memtype=0
+
+# Type 2 = EglSink/nv3dsink. On Jetson deepstream-app selects nv3dsink -- the
+# same sink Milestone 2 validated on DISPLAY=:1.
+# sync=1 paces playback in real time, matching Milestone 2's behaviour.
+[sink0]
+enable=1
+type=2
+sync=1
+source-id=0
+gpu-id=0
+nvbuf-memory-type=0
+
+[osd]
+enable=1
+gpu-id=0
+border-width=3
+text-size=15
+text-color=1;1;1;1;
+text-bg-color=0.3;0.3;0.3;1
+font=Serif
+show-clock=0
+nvbuf-memory-type=0
+
+[streammux]
+gpu-id=0
+live-source=0
+batch-size=1
+batched-push-timeout=40000
+width=1920
+height=1080
+enable-padding=0
+nvbuf-memory-type=0
+
+[primary-gie]
+enable=1
+gpu-id=0
+batch-size=1
+gie-unique-id=1
+nvbuf-memory-type=0
+plugin-type=1
+config-file=config_inferserver_trafficcamnet.txt
+# Class 2 = person, drawn blue.
+bbox-border-color0=1;0;0;1
+bbox-border-color1=0;1;1;1
+bbox-border-color2=0;0;1;1
+bbox-border-color3=0;1;0;1
+
+# Milestone 5 checkpoint 2 -- identical to the [tracker] group in
+# deepstream_app_walk_headless.txt. Kept spelled out rather than shared: these
+# two configs are meant to be readable side by side, and deepstream-app has no
+# include mechanism. display-tracking-id=1 makes nvdsosd append the tracking id
+# to each label, which is the on-screen evidence for this checkpoint.
+# Rationale and the DeepStream 9.1 key set: docs/milestone-05-tracking.md
+[tracker]
+enable=1
+tracker-width=960
+tracker-height=544
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml
+gpu-id=0
+display-tracking-id=1
+
+# Milestone 5 checkpoint 3 -- identical to the group in the headless config.
+# On screen, expect the ROI rectangle outlined and a live "RF=<count>" label.
+# Do NOT expect the person's box to change colour or gain a "ROI:" suffix when
+# they step inside: nvdsanalytics does set both, but deepstream-app's
+# process_meta frees display_text and resets border_color downstream, so those
+# per-object indications are discarded before they reach the OSD.
+# Evidence and full record: docs/milestone-05-restricted-zone.md
+[nvds-analytics]
+enable=1
+config-file=config_nvdsanalytics_restricted_zone.txt
+
+[tests]
+file-loop=0
