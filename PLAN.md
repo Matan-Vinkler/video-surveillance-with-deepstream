@@ -30,7 +30,8 @@ Target end state, and where the work currently sits:
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
    [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]    [DONE M5.3]      [M9]
              all of the above now also runs containerised  [DONE M6]
-             and is served through in-process Triton       [DONE M7]
+             served through in-process Triton              [DONE M7]
+             and characterised + redeployed on the Jetson  [DONE M8]
        │                │               │              │             │
   DeepStream:      TrafficCamNet FP16   NvSORT via   restricted   monitoring,
   source ! decoder   TensorRT engine    nvtracker    zone via     logging
@@ -55,11 +56,14 @@ on-screen bounding boxes (M5 checkpoint 1), those detections carry a persistent
 `object_id` (M5 checkpoint 2), and the application now determines whether that
 tracked person is inside a restricted zone (M5 checkpoint 3).
 
-**Milestones 5, 6 and 7 are complete.** The application runs containerised, with
-detector and tracker metadata byte-identical to the host-native run (M6), and
-inference is now served through `nvinferserver` and in-process Triton around the
+**Milestones 5, 6, 7 and 8 are complete.** The application runs containerised,
+with detector and tracker metadata byte-identical to the host-native run (M6);
+inference is served through `nvinferserver` and in-process Triton around the
 same FP16 engine, with detection structure, tracking and restricted-zone
-behaviour all preserved (M7).
+behaviour all preserved (M7); and the deployed artifact has been characterised
+under sustained load — **~178 fps, 5.94× real-time headroom, no thermal
+throttling, no degradation over ten minutes** — and then successfully
+redeployed in fresh containers reproducing behaviour exactly (M8).
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
@@ -68,6 +72,8 @@ Tracking: [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md).
 Restricted zone: [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md).
 Containerisation: [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md).
 Triton serving: [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md).
+Edge characterisation: [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md).
+Redeployment: [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md).
 
 ---
 
@@ -83,8 +89,8 @@ learning progress (§7) is tracked separately.
 - [x] **5. Build DeepStream Inference Pipeline**
 - [x] **6. Containerize the Application**
 - [x] **7. Deploy Inference with Triton Inference Server**
-- [ ] **8. Deploy on Edge Device (Jetson)** ← next
-- [ ] **9. Monitoring and Logging**
+- [x] **8. Deploy on Edge Device (Jetson)**
+- [ ] **9. Monitoring and Logging** ← next
 - [ ] **10. Final Report and Deliverables**
 
 | № | Milestone | Status | Documentation |
@@ -96,13 +102,136 @@ learning progress (§7) is tracked separately.
 | 5 | Build DeepStream Inference Pipeline | **Complete** — all 3 checkpoints | [`docs/milestone-05-inference-pipeline.md`](docs/milestone-05-inference-pipeline.md), [`docs/milestone-05-tracking.md`](docs/milestone-05-tracking.md), [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md), [`docs/milestone-05-osd-ghosting.md`](docs/milestone-05-osd-ghosting.md), [`docs/milestone-05-inspection.md`](docs/milestone-05-inspection.md) |
 | 6 | Containerize the Application | **Complete** | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
 | 7 | Deploy Inference with Triton | **Complete** | [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) |
-| 8 | Deploy on Edge Device (Jetson) | Not started — **next** | — |
-| 9 | Monitoring and Logging | Not started | — |
+| 8 | Deploy on Edge Device (Jetson) | **Complete** — all 3 checkpoints | [`docs/milestone-08-inspection.md`](docs/milestone-08-inspection.md), [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md), [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md) |
+| 9 | Monitoring and Logging | Not started — **next** | — |
 | 10 | Final Report and Deliverables | Not started | — |
 
 ---
 
 ## 4. Current milestone
+
+**Milestone 9 — Monitoring and Logging — is next. It has not been opened.**
+
+Expected focus is metrics, event output and observability (§2 assigns the
+`output` stage of the architecture to it). Detail is added when the milestone is
+opened, per §6.
+
+---
+
+### Milestone 8 (complete)
+
+**Milestone 8 is complete — all three checkpoints.**
+
+The capstone requirement is *"Edge: run on Jetson Orin/Xavier with
+`deepstream-app`"*, and that literal requirement was already met — the
+application has only ever run on this Jetson. The inspection therefore asked
+what edge deployment had *not* proven, and found one answer: **every run this
+project had ever made processed 288 frames and stopped.** No run had exceeded
+9.61 s of video, so there was no evidence at all about steady-state throughput,
+resource use, thermals or stability. Milestone 8 measured the existing artifact
+under sustained load rather than building a new one, then proved it could still
+be redeployed afterwards.
+
+`video-surveillance-deepstream:m7-triton` was reused unchanged throughout, and
+nothing was built, pulled or pruned. Free space on the 116 GB filesystem is in
+the mid-20s of GB (29 GB at the 8.1 inspection, 25 GB on 2026-08-13), and Docker
+reports that image's own 14.08 GB of layers as "reclaimable" purely because no
+container references them — so `docker system prune -a` would delete this
+project's deployment artifact. The approach held: everything new entered the
+container by bind mount, free disk was 29 GB before the soak and 29 GB after,
+and 25 GB before and after the 8.3 redeployment.
+
+| # | Checkpoint | Status |
+|---|---|---|
+| 8.1 | Edge environment and deployment inspection | **Complete** — [`docs/milestone-08-inspection.md`](docs/milestone-08-inspection.md) |
+| 8.2 | Full-pipeline characterisation and bounded soak | **Complete** — [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md) |
+| 8.3 | Redeployment after load | **Complete** — [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md) |
+
+#### 8.2 — complete
+
+A 60 s pilot validated the measurement machinery, then a single instrumented run
+took a **30 s idle baseline followed by a 604 s unpaced `file-loop` soak** with
+`tegrastats` at 1 Hz, `deepstream-app`'s `**PERF` lines host-timestamped, its
+RSS sampled from `/proc`, and every kernel cooling-device state sampled at 1 Hz.
+It exited **0** on the first shutdown rung. Roughly 109,000 frames were
+processed, against 288 for every prior run in the project.
+
+- **Sustained throughput: ~178 fps** — steady-window mean **178.14 fps**
+  (n=540, sd 1.36), all 540 samples above the 29.97 fps source rate, giving
+  **~5.94× processing headroom**. Because the run is unpaced (`sync=0`), that is
+  a **capacity** result: the board has ample headroom for a 29.97 fps stream. It
+  is not 178 fps of real-time playback.
+- **Corroborated, not self-reported.** An independent frame count from
+  GStreamer's per-seek warning gave **178.03 fps** — 0.06% from DeepStream's own
+  figure.
+- **No degradation.** Fitted trend +0.010 fps/min; first third to last third
+  +0.02%, while `tj` rose 2.56 °C to a plateau.
+- **No thermal frequency capping**, and this is now **measured rather than
+  inferred**: all three Class A cooling devices (`cpufreq-cpu0`, `cpufreq-cpu4`,
+  `devfreq-17000000.gpu`) stayed at state 0 throughout. `tj` peaked at 64.97 °C,
+  ~5 °C below the 70 °C passive trip. `pwm-fan` stepped 0 → 1 at t+46 s, which
+  is normal thermal management and not throttling.
+- **Loop cost is negligible** — boundary windows averaged 178.03 fps against
+  178.33 fps for the rest, so no sample was excluded from any statistic.
+- **Memory is the one unresolved result.** RSS grew **+84.91 MB** over the steady
+  window in decelerating, stepwise fashion (first half +17.4 MB/min, second half
+  +1.3 MB/min), with two further steps in the last 16 s. **No leak is claimed and
+  no leak is ruled out** — see §10.
+
+**Deviation from the 8.2 design, recorded rather than papered over:** the plan
+called for two phases, the first a dedicated cold single-pass measurement.
+**That dedicated Phase A was never executed** — `scripts/measure_edge.sh`
+contains no Phase A implementation. A ~126.09 fps figure exists but was derived
+retrospectively from the mtime span of KITTI files left by an earlier Milestone 7
+run that had per-frame metadata dumping enabled; it is contextual evidence, not
+an 8.2 Phase A measurement, and the gap between it and the soak result is **not**
+attributed to dumping. Phase A was not re-run to fill the gap: the soak result is
+the milestone's throughput measurement and it is independently corroborated
+([detail](docs/milestone-08-edge-deployment.md) §16).
+
+#### 8.3 — complete
+
+Two fresh `docker run --rm` invocations on 2026-08-13 — `run_container.sh
+--headless --triton` and `--zone --triton` — both exit **0**. No new script was
+written; the existing modes and the existing analysers were enough. Every
+primary invariant matched exactly on the fresh runs' own evidence:
+
+- **288/288 frames**, clean EOS, `App run successful`, no `ERROR from element`
+- **Tracking:** 0 mid-track ID switches, **2** unique ids, a 224-frame run over
+  frames 50..273
+- **Restricted zone:** entry **109**, **75** frames inside, exit **183**, one
+  unbroken interval, 100.00% agreement with independent recomputation, 0
+  disagreements, per-object ROI status agreeing on every frame, and the centroid
+  counterfactual still at 0
+- **Detector variance:** 0 of 288 frames differ from the pre-soak dumps, against
+  the project's ≤ 5 tolerance — reported as **corroborating** evidence, since the
+  historical reference is dated but carries no manifest or hash
+- **Hygiene:** `docker ps -a` empty, `docker system df` byte-identical, engine
+  sha256 unchanged, no new image or layer, no orphan process, no output video,
+  disk 25 GB before and after
+
+**Timing limitation, recorded rather than glossed:** the soak ended 2026-08-12
+19:07 and 8.3 ran 2026-08-13 17:56 — roughly **23 hours** later, with the board
+idle at 45.12 °C and the GPU at its 306 MHz floor. **This was not a hot restart
+and not immediate post-load recovery**, and the soak was deliberately not re-run
+to manufacture that state. What 8.3 proves is that after the sustained-load
+characterisation the artifact remained intact and could subsequently be launched
+in fresh independent containers reproducing established behaviour
+([detail](docs/milestone-08-redeployment.md) §3, §14).
+
+**8.3 does not close either M8.2 open question.** A fresh 9.61-second process
+says nothing about whether a long-lived `deepstream-app`'s resident set
+converges, and nothing about the unexplained blank log lines. Both remain open
+in §10.
+
+8.2 closed the long-standing entry in §10: end-to-end pipeline throughput had
+been unmeasured since Milestone 5. Monitoring, metrics and event output are
+Milestone 9 (§2); systemd, autostart, reboot persistence, OTA and any cloud or
+remote-serving work are out of scope for this project.
+
+---
+
+### Milestone 7 (complete)
 
 **Milestone 7 is complete.** Inference is now served through `nvinferserver` and
 an **in-process Triton 2.68.0**, which uses its TensorRT backend to execute the
@@ -136,8 +265,6 @@ Two consequences worth carrying forward:
   against a frozen, hash-verified M6 capture rather than a live rerun. That is a
   documented verification limitation, printed on every passing run
   ([detail](docs/milestone-07-triton.md) §6).
-
-**Milestone 8 — Deploy on Edge Device (Jetson) — is next. Not yet opened.**
 
 ---
 
@@ -307,7 +434,6 @@ Deliberately thin — detail is added when a milestone is opened.
 
 | № | Milestone | Expected focus |
 |---|---|---|
-| 8 | Deploy on Edge Device | Standalone operation on the Jetson |
 | 9 | Monitoring and Logging | Metrics, event output, observability |
 | 10 | Final Report | Consolidated deliverables |
 
@@ -474,6 +600,44 @@ related but not identical.
 - [x] That a verification harness needs its own negative tests — three
       false-passing checks were found and fixed in this milestone
 
+**From Milestone 8 — Edge characterisation (checkpoint 8.2)**
+
+- [x] Jetson thermal framework: zones, trip points, and the difference between a
+      **passive** trip (frequency capping) and an **active** trip (fan)
+- [x] Cooling devices as the *mechanism* behind a trip, and that `cpufreq-*` /
+      `devfreq-*` state is direct throttling evidence while alert and fan devices
+      are not
+- [x] That `GR3D_FREQ` is a GPU **load** percentage, not a clock, and that the
+      clock has to come from devfreq sysfs
+- [x] `MemAvailable` versus tegrastats "used", and why the former is the right
+      guard on a board with no swap
+- [x] Reading a containerised process's RSS from the host via `--cidfile` →
+      `docker inspect .State.Pid` → `/proc/<pid>/status`, with no `docker exec`
+      polling inside the measurement
+- [x] That libc **block-buffers** a pipe, so line timestamps are meaningless
+      without `stdbuf -oL` — and that `stdbuf` `exec`s, leaving PID 1 intact
+- [x] `[tests] file-loop` as a seek rather than a source restart, and measuring
+      its cost instead of assuming it
+- [x] Finding an **independent** cross-check for a self-reported metric — one
+      warning line per seek turned out to be a frame counter
+- [x] Distinguishing measurement, observation, interpretation and inference in a
+      results document, and leaving an unresolved result unresolved
+
+**From Milestone 8 — Redeployment (checkpoint 8.3)**
+
+- [x] Designing a redeployment test around **self-contained** invariants, so the
+      verdict needs no external baseline and cannot be held hostage by one
+- [x] Separating primary acceptance evidence from corroborating evidence, and
+      deciding in advance which one is allowed to fail the test
+- [x] That a dated file set is not an attested one — mtimes are provenance by
+      inference, a manifest plus fingerprint is provenance by construction
+- [x] Recognising when an existing verification script is the *wrong* tool: it
+      re-asserts a previous milestone's claim, carries an external dependency,
+      and applies a strict criterion that known jitter could break
+- [x] Bounding a claim by what the *conditions* permitted — a 23-hour gap turns
+      "hot restart" into "later redeployment", and the honest claim is the
+      narrower one
+
 ---
 
 ## 8. Key engineering decisions
@@ -533,6 +697,12 @@ related but not identical.
 | Separate `verify_triton.sh` rather than extending `verify_container.sh` | M6's passing status is a statement about the nvinfer path and keeps meaning exactly that; M7 adds a claim rather than redefining one | 7 | Active |
 | Byte-identity retired as the M7 acceptance criterion, after measurement | Byte comparison is the better *discovery* tool and found the divergence; semantics are what the milestone must claim ([detail](docs/milestone-07-triton.md) §7) | 7 | Active |
 | M6 image deleted; comparison against a frozen hash-sealed baseline | Storage capacity — the Triton stack left no room to keep both. Recorded as a verification limitation, not an equivalent substitute ([detail](docs/milestone-07-triton.md) §6) | 7 | Active |
+| M8 **measures** the existing artifact rather than building a new one | The literal capstone requirement was already met by M6/M7. The only non-vacuous remaining content is steady-state behaviour, so nothing is built, pulled or pruned and anything new enters by bind mount ([detail](docs/milestone-08-inspection.md) §8) | 8 | Active |
+| The sustained run is **unpaced** (`sync=0`) | Yields the throughput ceiling and the harshest thermal/power condition in one run. The cost is that the result is a **capacity** statement — 5.94× headroom for a 29.97 fps stream — and must never be described as real-time playback ([detail](docs/milestone-08-edge-deployment.md) §4) | 8 | Active |
+| Throttling asserted from **cooling-device state**, not inferred from clocks | `/sys/class/thermal/cooling_device*/cur_state` is world-readable and names the frequency-capping devices directly, so throttling is measured rather than deduced. `cpufreq-*`/`devfreq-*` are classified apart from alert and fan devices, because a fan stepping up is not throttling ([detail](docs/milestone-08-edge-deployment.md) §10) | 8 | Active |
+| M8.3 verdict rests on **self-contained** invariants; historical dumps only corroborate | The fresh runs compute all fourteen tracking and zone invariants about themselves, so acceptance needs no reference. The pre-soak dumps are dated but carry no manifest, unlike the hash-sealed M6 baseline, so they inform rather than decide ([detail](docs/milestone-08-redeployment.md) §11) | 8 | Active |
+| No new verification script for M8.3 | Two existing `run_container.sh` modes plus the two existing analysers already express every established invariant. `verify_triton.sh` was deliberately **not** re-run: it is M7's statement of record, needs the external M6 baseline, and asserts a strict detector-count criterion that documented jitter could break ([detail](docs/milestone-08-redeployment.md) §2) | 8 | Active |
+| Loop-boundary samples measured, then deliberately **not** excluded | Exclusion was designed in as a mitigation; measurement put the boundary cost at ~0.30 fps of 178 (0.17%), so discarding 334 of 540 samples would have been worse methodology than keeping them ([detail](docs/milestone-08-edge-deployment.md) §8) | 8 | Active |
 
 ---
 
@@ -578,9 +748,28 @@ Off the critical path; recorded so they do not become scope.
   across frames was not established
   ([detail](docs/milestone-05-osd-ghosting.md) §8). The fix does not depend on the
   answer. Worth closing only if the artifact reappears in another topology.
-- **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine
-  alone; the assembled pipeline has no performance figure, and it now contains a
-  tracker as well. Measure once analytics is in, rather than twice.
+- ~~**End-to-end pipeline throughput is unmeasured**~~ — answered by M8.2: the
+  assembled pipeline sustains **~178 fps** (steady-window mean 178.14 fps,
+  n=540, sd 1.36) on the deployed Triton path, corroborated to 0.06% by an
+  independent frame count. Against the 29.97 fps source that is **~5.94×
+  processing headroom**. The measurement is **unpaced** (`sync=0`), so it is a
+  capacity result, not real-time playback. No thermal frequency capping occurred
+  and throughput did not degrade over ten minutes
+  ([detail](docs/milestone-08-edge-deployment.md) §6–§12).
+- **Does `deepstream-app`'s resident set converge?** M8.2 measured **+84.91 MB**
+  of RSS growth over a 540 s steady window, strongly decelerating (+17.4 MB/min
+  in the first half, +1.3 MB/min in the second) and **stepwise** rather than
+  continuous, with a two-minute plateau near 1168 MB followed by two more steps
+  in the final 16 s. **No leak is claimed and none is ruled out** — a bounded
+  ten-minute run cannot settle it, and the cause was not isolated. Answering it
+  needs a substantially longer run plus allocation-level instrumentation
+  ([detail](docs/milestone-08-edge-deployment.md) §13).
+- **What writes the 15,226 empty lines into the application log?** They are
+  93.6% of the soak log and arrive at a median 40.2 ms cadence (~24.9 Hz). That
+  is numerically close to `batched-push-timeout=40000`, but **nothing connects
+  the two beyond the coincidence of frequency**, no mechanism was traced, and no
+  cause is attributed. Harmless — no measurement depends on it
+  ([detail](docs/milestone-08-edge-deployment.md) §17).
 - **Why the entering track changed ID once** — measured and characterised, not
   explained. A border-clipped box grows fast enough that NvSORT's association
   plausibly fails while the target is still probational, but the low-level
@@ -617,6 +806,6 @@ Off the critical path; recorded so they do not become scope.
 | The `[tracker]` group is duplicated across two app configs | Low — `deepstream-app` has no include mechanism, and keeping the two configs readable side by side was judged worth the duplication | If a third app config appears, or the groups drift |
 | The container image is a **custom artifact**, not NVIDIA's shipped one | Medium — supported as a software combination on this device, unsupported as an image. Overriding a vendor `apt-mark hold` is deliberate and documented | If NVIDIA ships a Jetson image already carrying TensorRT 10.16.2, simplify the Dockerfile rather than leave the pin as archaeology |
 | Container image is 8.99 GB | Low — both TensorRT versions transit the layers | If image size becomes a deployment constraint (M8) |
-| The M7 Triton image is **16.03 GB**, and with its base occupies ~71 GB of a 116 GB filesystem | **High for M8** — a rebuild measured free space falling to 14.48 GB, and the M6 image had to be deleted to make room | M8 opens; decide whether Triton's serving features justify ~1.8× the direct-inference image |
+| The M7 Triton image is **16.03 GB**, and with its base occupies ~71 GB of a 116 GB filesystem | **High, and now bounded** — a rebuild measured free space falling to 14.48 GB, and the M6 image had to be deleted to make room. 29 GB remained free at the M8.1 inspection, 25 GB on 2026-08-13 ([detail](docs/milestone-08-inspection.md) §2) | Trigger fired: M8 opened and decided to **reuse the image unchanged** — never build, pull or prune, and bind-mount anything new. Revisit only if a rebuild becomes unavoidable, at which point the ~1.8× size of the Triton path over direct inference is the thing to weigh |
 | `verify_triton.sh` depends on `/home/matan/m6-baseline`, outside the repository | Medium — the M7 comparison is not reproducible on a clean machine, only re-runnable here | If the project must be verifiable from a fresh clone, or the baseline is lost |
 | No live M6 regression run accompanies the M7 result | Medium — M7 is compared against a frozen capture, not a live M6 rerun ([detail](docs/milestone-07-triton.md) §6) | If disk allows both images again, or M6 needs re-certifying |
