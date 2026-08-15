@@ -196,7 +196,11 @@ it, every mode is the Milestone 6 `nvinfer` path.
 | `./scripts/run_container.sh --build --triton` | Builds the Triton image; asserts all 18 TensorRT packages are pinned and Triton is intact |
 | `./scripts/run_container.sh --headless --triton` | Runs the pipeline through in-process Triton, writing its metadata to the host |
 | `./scripts/run_container.sh --display --triton` | Visible Triton playback on the physical monitor |
+| `./scripts/run_container.sh --events --triton` | Writes JSON Lines restricted-zone events. `--network none` — no broker needed |
+| `./scripts/run_container.sh --events-mqtt --triton` | The same, and publishes each event to MQTT. `--network host` — the broker listens on loopback only |
 | `./scripts/verify_triton.sh` | Eleven checks, comparing the Triton run against a frozen, hash-verified Milestone 6 baseline |
+| `./scripts/verify_events.sh` | Twenty checks on the event stream, cross-checked against an independent recomputation |
+| `./scripts/verify_mqtt.sh` | Twenty checks on MQTT delivery, including a byte comparison with the JSONL and a broker-unreachable negative test |
 
 **Model and engines**
 
@@ -371,6 +375,10 @@ fourteen checks:
 | Restricted-zone analytics | [`docs/milestone-05-restricted-zone.md`](docs/milestone-05-restricted-zone.md) |
 | Containerisation | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
 | Triton serving | [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) |
+| Edge characterisation under sustained load | [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md) |
+| Redeployment after load | [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md) |
+| Structured surveillance events | [`docs/milestone-09-events.md`](docs/milestone-09-events.md) |
+| MQTT event delivery | [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md) |
 | Engineering roadmap and decisions | [`PLAN.md`](PLAN.md) |
 
 Each document records not just what was built but **why**, along with the
@@ -379,8 +387,12 @@ verification evidence and an explicit statement of what remains unproven.
 ## Roadmap
 
 Detection, tracking and restricted-zone monitoring work end to end, host-native,
-containerised, and served through in-process Triton. Edge deployment is next —
-see [`PLAN.md`](PLAN.md).
+containerised, and served through in-process Triton. The deployment has been
+characterised on the Jetson under sustained load and redeployed afterwards, and
+it emits structured restricted-zone events to a JSON Lines file and publishes
+the same payloads over MQTT to an external subscriber. Only the MQTT mode uses
+host networking; every other mode runs with `--network none`. Final deliverables
+are next — see [`PLAN.md`](PLAN.md).
 
 ## Third-party assets
 

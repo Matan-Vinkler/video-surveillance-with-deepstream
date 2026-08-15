@@ -4,8 +4,16 @@
 # .txt files in configs/ remains the surveillance application; analytics_probe
 # exists only because deepstream-app cannot report nvdsanalytics metadata.
 #
-#   make            build ../build/analytics_probe
-#   make clean      remove it
+#   make            build ../build/analytics_probe        (no MQTT)
+#   make mqtt       build ../build/analytics_probe_mqtt   (MQTT enabled)
+#   make clean      remove both
+#
+# TWO BINARIES, DELIBERATELY. The `mqtt` target links libmosquitto, whose HEADERS
+# are present in the Milestone 7 container but NOT on this host -- so `make mqtt`
+# has to run inside that container (scripts/ds_common.sh does it). Keeping the
+# default target free of libmosquitto means the Milestone 5/7/9.2 paths use a
+# binary that has never linked it, so whichever build ran last cannot change an
+# earlier milestone's result.
 #
 # Nothing is installed and nothing under /opt is written. The DeepStream root is
 # discovered through the unversioned symlink, so no version is hard-coded --
@@ -30,7 +38,9 @@ LDFLAGS   += -L$(DS_ROOT)/lib -lnvdsgst_meta -lnvds_meta
 # the binary rather than requiring callers to set LD_LIBRARY_PATH.
 LDFLAGS   += -Wl,-rpath,$(DS_ROOT)/lib
 
-.PHONY: all clean
+MQTT_TARGET := $(BUILD_DIR)/analytics_probe_mqtt
+
+.PHONY: all mqtt clean
 all: $(TARGET)
 
 $(TARGET): $(SRC) | $(BUILD_DIR)
@@ -39,8 +49,24 @@ $(TARGET): $(SRC) | $(BUILD_DIR)
 	    echo "       Set DS_ROOT=/path/to/deepstream."; exit 1; }
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
+# Same source, same serialization, plus the MQTT transport. Fails loudly rather
+# than silently producing a binary whose --mqtt-host does nothing.
+mqtt: $(MQTT_TARGET)
+
+$(MQTT_TARGET): $(SRC) | $(BUILD_DIR)
+	@test -d "$(DS_ROOT)/sources/includes" || { \
+	    echo "ERROR: DeepStream headers not found under $(DS_ROOT)."; \
+	    echo "       Set DS_ROOT=/path/to/deepstream."; exit 1; }
+	@test -f /usr/include/mosquitto.h || { \
+	    echo "ERROR: mosquitto.h not found. libmosquitto-dev is present in the"; \
+	    echo "       Milestone 7 container but not on the Jetson host, so this"; \
+	    echo "       target must be built inside the container:"; \
+	    echo "         ./scripts/run_container.sh --events-mqtt   (builds it)"; \
+	    exit 1; }
+	$(CXX) $(CXXFLAGS) -DHAVE_MOSQUITTO -o $@ $< $(LDFLAGS) -lmosquitto
+
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(MQTT_TARGET)

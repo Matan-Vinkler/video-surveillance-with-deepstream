@@ -9,6 +9,10 @@
 #   --build      build the image (fails loudly if the TensorRT pin did not take)
 #   --headless   deepstream-app -> fakesink, writes the detector/tracker dumps
 #   --zone       analytics_probe, writes the restricted-zone verdict
+#   --events     analytics_probe + JSON Lines zone-transition events (M9.2)
+#                --network none: file output needs no network
+#   --events-mqtt  the same, and publishes each event to MQTT (M9.3)
+#                --network host: REQUIRED, the broker listens on loopback only
 #   --display    visible playback on the physical monitor
 #   --shell      interactive shell with the same mounts
 #
@@ -18,14 +22,22 @@
 # Every mount and runtime flag is printed before the container starts: nothing
 # important is hidden inside this script.
 #
-# Deliberately NOT used: --privileged, --device, --gpus, host networking.
+# Deliberately NOT used: --privileged, --device, --gpus.
 # On Jetson the NVIDIA runtime injects the GPU, NVDEC, VIC and display nodes
 # through its CSV mode, which was verified before writing this
 # (docs/milestone-06-containerization.md).
 #
+# NETWORKING. Every mode uses --network none EXCEPT --events-mqtt, which uses
+# --network host because the Mosquitto broker listens on loopback only. That one
+# exception is Milestone 9.3 and is scoped to that mode alone: the Milestone 7
+# claim that Triton runs in-process with no socket rests on --network none and
+# is asserted by verify_triton.sh, which is untouched.
+#
 # Usage:
 #   ./scripts/run_container.sh --build
 #   ./scripts/run_container.sh --headless
+#   ./scripts/run_container.sh --events --triton
+#   ./scripts/run_container.sh --events-mqtt --triton
 #   DISPLAY=:1 ./scripts/run_container.sh --display
 
 set -euo pipefail
@@ -41,11 +53,11 @@ MODE=""
 TRITON=0
 while (( $# > 0 )); do
     case "$1" in
-        --build|--headless|--zone|--display|--shell)
+        --build|--headless|--zone|--events|--events-mqtt|--display|--shell)
             [[ -z "$MODE" ]] || die "Pick one mode, not '$MODE' and '$1'."
             MODE="$1" ;;
         --triton) TRITON=1 ;;
-        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
         *) die "Unknown option '$1'. Try --help." ;;
     esac
     shift
@@ -169,6 +181,106 @@ case "$MODE" in
               --tracker-config /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml \
               --analytics-config /app/configs/config_nvdsanalytics_restricted_zone.txt \
               --out-dir /app/models/zone
+        ;;
+
+    --events)
+        # Milestone 9.2. The same probe on the same pipeline as --zone, with
+        # --events-output added so ROI transitions are also written as JSON
+        # Lines. Kept as a SEPARATE mode rather than folded into --zone: --zone
+        # is a completed-milestone path that verify_zone.sh and verify_triton.sh
+        # assert against, and it must keep behaving exactly as it did.
+        #
+        # --network none is retained. File event generation needs no network,
+        # so the Milestone 7 isolation claim is not weakened here. MQTT is
+        # Milestone 9.3 and will need its own mode and its own justification.
+        #
+        # The probe binary is bind-mounted from the host build rather than the
+        # one baked into the image, so extending it costs no image rebuild --
+        # the same tactic that supplies the engine. Host and container both run
+        # DeepStream 9.1.0 GCID 46117240, and the binary's RUNPATH already
+        # points at /opt/nvidia/deepstream/deepstream/lib, which exists in both.
+        require_probe
+        mkdir -p "$EVENTS_DIR"
+        bold "== Containerised restricted-zone probe + event stream (M9.2) =="
+        printf '  %-24s %s\n' "image" "$IMAGE"
+        printf '  %-24s %s\n' "probe" "$PROBE_BIN (host build, bind-mounted)"
+        printf '  %-24s %s\n' "events" "$EVENTS_FILE (truncated per run)"
+        info ""
+        show_and_run "${COMMON_ARGS[@]}" --network none \
+            -v "$PROBE_BIN:/app/build/analytics_probe:ro" \
+            -v "$EVENTS_DIR:/app/models/events" \
+            "$IMAGE" \
+            /app/build/analytics_probe \
+              --video /opt/nvidia/deepstream/deepstream/samples/streams/sample_walk.mov \
+              --infer-config "/app/configs/$INFER_CFG_NAME" \
+              --inference-element "$INFER_ELEMENT" \
+              --tracker-lib /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so \
+              --tracker-config /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml \
+              --analytics-config /app/configs/config_nvdsanalytics_restricted_zone.txt \
+              --out-dir /app/models/zone \
+              --events-output "/app/models/events/$(basename "$EVENTS_FILE")"
+        ;;
+
+    --events-mqtt)
+        # Milestone 9.3. Identical to --events except for two things, and both
+        # of them are the milestone:
+        #
+        #   1. --network host, because the Mosquitto broker on this Jetson
+        #      listens on 127.0.0.1:1883 ONLY. Milestone 9.1 tested all three
+        #      modes: --network none and the default bridge both fail to reach
+        #      it (bridge fails even via the 172.17.0.1 gateway), and host
+        #      networking is the only option that needs neither sudo nor a
+        #      change to the broker's configuration.
+        #
+        #   2. a probe built with -DHAVE_MOSQUITTO.
+        #
+        # THIS IS A NEW MODE, NOT A RELAXATION. --headless, --zone, --events,
+        # --display and --shell all keep --network none. Milestone 7's evidence
+        # that Triton runs in-process with no socket rests on that isolation and
+        # is untouched: the network is opened only where publishing genuinely
+        # requires it, and it is visible in the mode name at the CLI.
+        mkdir -p "$EVENTS_DIR"
+
+        # libmosquitto's headers ship in this image but not on the Jetson host,
+        # so the MQTT build happens in the container and lands in the
+        # bind-mounted build/ directory. No image is rebuilt: this is a
+        # throwaway --rm container running the same make target.
+        if [[ ! -x "$PROBE_MQTT_BIN" || "$REPO_ROOT/tools/analytics_probe.cpp" -nt "$PROBE_MQTT_BIN" ]]; then
+            bold "== Building the MQTT probe inside the container =="
+            info "  (libmosquitto headers are in the image, not on the host)"
+            mkdir -p "$REPO_ROOT/build"
+            docker run --rm --runtime nvidia --network none \
+                -v "$REPO_ROOT/tools:/src/tools:ro" \
+                -v "$REPO_ROOT/build:/src/build" \
+                "$IMAGE" \
+                make -C /src/tools mqtt DS_ROOT=/opt/nvidia/deepstream/deepstream
+            [[ -x "$PROBE_MQTT_BIN" ]] \
+                || die "The container build reported success but '$PROBE_MQTT_BIN' is not executable."
+        fi
+
+        bold "== Containerised zone probe + JSON Lines + MQTT (M9.3) =="
+        printf '  %-24s %s\n' "image" "$IMAGE"
+        printf '  %-24s %s\n' "probe" "$PROBE_MQTT_BIN (MQTT build, bind-mounted)"
+        printf '  %-24s %s\n' "events" "$EVENTS_FILE (truncated per run)"
+        printf '  %-24s %s\n' "broker" "$MQTT_HOST:$MQTT_PORT"
+        printf '  %-24s %s\n' "topic" "$MQTT_TOPIC"
+        printf '  %-24s %s\n' "network" "host (required to reach the loopback broker)"
+        info ""
+        show_and_run "${COMMON_ARGS[@]}" --network host \
+            -v "$PROBE_MQTT_BIN:/app/build/analytics_probe_mqtt:ro" \
+            -v "$EVENTS_DIR:/app/models/events" \
+            "$IMAGE" \
+            /app/build/analytics_probe_mqtt \
+              --video /opt/nvidia/deepstream/deepstream/samples/streams/sample_walk.mov \
+              --infer-config "/app/configs/$INFER_CFG_NAME" \
+              --inference-element "$INFER_ELEMENT" \
+              --tracker-lib /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so \
+              --tracker-config /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvSORT.yml \
+              --analytics-config /app/configs/config_nvdsanalytics_restricted_zone.txt \
+              --out-dir /app/models/zone \
+              --events-output "/app/models/events/$(basename "$EVENTS_FILE")" \
+              --mqtt-host "$MQTT_HOST" --mqtt-port "$MQTT_PORT" \
+              --mqtt-topic "$MQTT_TOPIC"
         ;;
 
     --shell)

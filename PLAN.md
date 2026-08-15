@@ -28,7 +28,7 @@ Target end state, and where the work currently sits:
 
 ```
   video input  ──►  inference  ──►  tracking  ──►  analytics  ──►  output
-   [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]    [DONE M5.3]      [M9]
+   [DONE M2]      [DONE M3-M5.1]   [DONE M5.2]    [DONE M5.3]   [DONE M9]
              all of the above now also runs containerised  [DONE M6]
              served through in-process Triton              [DONE M7]
              and characterised + redeployed on the Jetson  [DONE M8]
@@ -56,14 +56,17 @@ on-screen bounding boxes (M5 checkpoint 1), those detections carry a persistent
 `object_id` (M5 checkpoint 2), and the application now determines whether that
 tracked person is inside a restricted zone (M5 checkpoint 3).
 
-**Milestones 5, 6, 7 and 8 are complete.** The application runs containerised,
+**Milestones 5 through 9 are complete.** The application runs containerised,
 with detector and tracker metadata byte-identical to the host-native run (M6);
 inference is served through `nvinferserver` and in-process Triton around the
 same FP16 engine, with detection structure, tracking and restricted-zone
 behaviour all preserved (M7); and the deployed artifact has been characterised
 under sustained load — **~178 fps, 5.94× real-time headroom, no thermal
 throttling, no degradation over ten minutes** — and then successfully
-redeployed in fresh containers reproducing behaviour exactly (M8).
+redeployed in fresh containers reproducing behaviour exactly (M8). The
+restricted-zone verdict is now published as structured events — transition-based
+JSON Lines, and the same bytes delivered over MQTT to an external subscriber
+(M9).
 
 Pipeline detail and rationale: [`docs/milestone-02-video-input.md`](docs/milestone-02-video-input.md).
 Engine detail and benchmarks: [`docs/milestone-04-tensorrt-optimization.md`](docs/milestone-04-tensorrt-optimization.md).
@@ -74,6 +77,8 @@ Containerisation: [`docs/milestone-06-containerization.md`](docs/milestone-06-co
 Triton serving: [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md).
 Edge characterisation: [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md).
 Redeployment: [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md).
+Surveillance events: [`docs/milestone-09-events.md`](docs/milestone-09-events.md).
+MQTT delivery: [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md).
 
 ---
 
@@ -90,8 +95,8 @@ learning progress (§7) is tracked separately.
 - [x] **6. Containerize the Application**
 - [x] **7. Deploy Inference with Triton Inference Server**
 - [x] **8. Deploy on Edge Device (Jetson)**
-- [ ] **9. Monitoring and Logging** ← next
-- [ ] **10. Final Report and Deliverables**
+- [x] **9. Monitoring and Logging**
+- [ ] **10. Final Report and Deliverables** ← next
 
 | № | Milestone | Status | Documentation |
 |---|---|---|---|
@@ -103,18 +108,147 @@ learning progress (§7) is tracked separately.
 | 6 | Containerize the Application | **Complete** | [`docs/milestone-06-containerization.md`](docs/milestone-06-containerization.md) |
 | 7 | Deploy Inference with Triton | **Complete** | [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) |
 | 8 | Deploy on Edge Device (Jetson) | **Complete** — all 3 checkpoints | [`docs/milestone-08-inspection.md`](docs/milestone-08-inspection.md), [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md), [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md) |
-| 9 | Monitoring and Logging | Not started — **next** | — |
-| 10 | Final Report and Deliverables | Not started | — |
+| 9 | Monitoring and Logging | **Complete** — all 3 checkpoints | [`docs/milestone-09-inspection.md`](docs/milestone-09-inspection.md), [`docs/milestone-09-events.md`](docs/milestone-09-events.md), [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md) |
+| 10 | Final Report and Deliverables | Not started — **next** | — |
 
 ---
 
 ## 4. Current milestone
 
-**Milestone 9 — Monitoring and Logging — is next. It has not been opened.**
+**Milestone 10 — Final Report and Deliverables — is next. It has not been
+opened.**
 
-Expected focus is metrics, event output and observability (§2 assigns the
-`output` stage of the architecture to it). Detail is added when the milestone is
-opened, per §6.
+Expected focus is consolidating the deliverables. Detail is added when the
+milestone is opened, per §6.
+
+---
+
+### Milestone 9 (complete)
+
+**Milestone 9 is complete — all three checkpoints.**
+
+The capstone asks for *"DeepStream analytics metadata, logging to file or
+Kafka/MQTT sink, optionally Prometheus and Grafana."* The inspection asked
+whether that could be done by configuration alone, and found it could not:
+
+> **`nvmsgconv` cannot carry `nvdsanalytics` ROI state.** It serialises
+> `NvDsEventMsgMeta`, which `deepstream-app` never attaches, and it never reads
+> the analytics user meta at all — its `NvDsAnalyticsObject` is a static
+> descriptive block from the msgconv config file, not the ROI verdict. A
+> configuration-only Milestone 9 could publish detections and track IDs but not
+> whether the person is inside the zone — everything except the thing this
+> system exists to detect
+> ([detail](docs/milestone-09-inspection.md) §2).
+
+The architecture is therefore:
+
+```
+nvdsanalytics metadata  ->  analytics_probe  ->  transition detection
+                                                          |
+                                            serialize ONCE to JSON
+                                                          |
+                                        +-----------------+-----------------+
+                                        |                                   |
+                                  events.jsonl                    MQTT surveillance/zone
+```
+
+`tools/analytics_probe.cpp` has been the project's only reader of
+`NVDS_USER_*_META_NVDSANALYTICS` since Milestone 5, so it is extended rather than
+duplicated. The event stream is **additive and off by default** — without
+`--events-output` nothing about its previous behaviour changes, which is what
+keeps `verify_zone.sh` and `verify_triton.sh` valid.
+
+| # | Checkpoint | Status |
+|---|---|---|
+| 9.1 | Observability and messaging inspection | **Complete** — [`docs/milestone-09-inspection.md`](docs/milestone-09-inspection.md) |
+| 9.2 | Structured surveillance events to file | **Complete** — [`docs/milestone-09-events.md`](docs/milestone-09-events.md) |
+| 9.3 | MQTT delivery to an external consumer | **Complete** — [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md) |
+
+#### 9.2 — complete
+
+`./scripts/verify_events.sh` exits 0, twenty checks. One fresh
+`docker run --rm` of the existing M7 image produced **exactly two events for 288
+frames**:
+
+```
+{"event":"zone_enter","event_time_utc":"2026-08-13T16:12:11.783Z","frame_number":109,
+ "stream_time_seconds":3.637,"zone":"RF","track_id":1,"class":"person","occupancy":1}
+{"event":"zone_exit", "event_time_utc":"2026-08-13T16:12:12.215Z","frame_number":183,
+ "stream_time_seconds":6.106,"zone":"RF","track_id":1,"class":"person","occupancy":0,
+ "frames_inside":75,"duration_seconds":2.502,"exit_reason":"left_zone"}
+```
+
+- **Transitions, not state.** `zone_enter` / `zone_exit` only. A per-frame
+  inside-state feed would be ~353 MB/day at 30 fps and would restate a fact the
+  consumer already knows. State is keyed by `(object_id, roi_label)`, so several
+  people and several ROIs work without anything hard-coded.
+- **Frame convention preserved.** `zone_exit.frame_number` is the **last frame of
+  the interval** (183), not the first frame outside it, so `183 - 109 + 1 = 75`
+  keeps the project's existing 109/75/183 numbers.
+- **Independently cross-checked.** `analyze_zone.py` recomputes the interval
+  offline in Python from the per-frame dumps and agrees exactly. Neither parses
+  the other's output.
+- **Timestamps are honest.** `nvstreammux attach-sys-ts` defaults to true, so on a
+  file source `ntp_timestamp` is *processing* time, not capture time (measured:
+  `1786637462613026000`). The schema therefore separates `event_time_utc` (when
+  this system observed the event) from `stream_time_seconds` (position in the
+  clip). `duration_seconds` uses a frame interval derived from PTS — 0.033367 s,
+  29.97 fps — so no frame rate is hard-coded.
+- **Existing behaviour unchanged, verified not assumed.** `verify_zone.sh` exit 0
+  and `verify_triton.sh` exit 0 (33 PASS, 0 FAIL) were both re-run against the
+  extended probe.
+- **No image rebuilt.** The probe is built on the host and bind-mounted over the
+  copy in the image, the same tactic that supplies the engine. `--network none`
+  is retained, so the Milestone 7 isolation claim is untouched.
+- **Bounded by design:** 409 bytes, truncated per run, git-ignored.
+
+Implemented but **NOT EXERCISED** on this clip: closing an interval when a track
+terminates while still inside (`exit_reason: track_ended` / `stream_ended`). The
+walker leaves the ROI at 183 and stays tracked, so the observed reason is
+`left_zone`, which the verification asserts explicitly.
+
+#### 9.3 — complete
+
+`./scripts/verify_mqtt.sh` exits 0, twenty checks. A `mosquitto_sub` started
+**before** the pipeline received **exactly two messages** on `surveillance/zone`,
+and they were **byte-identical to the JSONL lines** from the same run.
+
+- **One serialization, two sinks.** `serialize_event()` builds the JSON once and
+  `emit_event()` hands the same string to the file and to `mosquitto_publish`.
+  That is what makes a `diff` between the subscriber's output and the file
+  meaningful: MQTT is a **transport of the verified event**, not a second
+  interpretation of the metadata.
+- **QoS 1, retain false.** The broker PUBACKed 2 of 2 with 0 failures. QoS 1 is
+  **at-least-once** — no exactly-once claim is made. Retain is off because a
+  retained intrusion alert would be redelivered to every future subscriber as
+  though it had just happened.
+- **`--network host`, scoped to this one mode.** The broker listens on loopback
+  only; M9.1 measured that `--network none` and the default bridge both fail to
+  reach it. Every other mode keeps `--network none`, and `verify_triton.sh` — which
+  asserts that isolation in four places — still passes untouched.
+- **Failure is loud.** Pointed at a closed port, the run printed
+  `mqtt: cannot connect to 127.0.0.1:18831 -- Connection refused`, exited **1**
+  in **8 s** with no retry loop, and **still wrote the local JSONL record**. The
+  reliability hierarchy is analytics → JSONL (primary record) → MQTT (transport):
+  an outage is a delivery failure, not a detection failure.
+- **No image rebuilt.** `libmosquitto` headers exist in the M7 image but not on
+  the host, so the MQTT probe is built inside a throwaway `--rm` container into
+  the bind-mounted `build/`. Two binaries: `analytics_probe` (no MQTT, used by
+  M5/M7/M9.2) and `analytics_probe_mqtt`, so whichever build ran last cannot
+  change an earlier milestone's result.
+- **Existing behaviour unchanged, verified:** `verify_events.sh`,
+  `verify_zone.sh` and `verify_triton.sh` all exit 0.
+
+Prometheus, Grafana, Kafka and Redis were all considered and rejected with
+reasons ([detail](docs/milestone-09-inspection.md) §2, §5); systemd, autostart,
+reboot persistence, OTA and any cloud work remain out of scope for the project.
+
+**What Milestone 9 does not claim:** no exactly-once delivery, no authentication
+or TLS on the broker, no retained messages, no guarantee beyond the broker's
+PUBACK, and no `pipeline_health` — so a silent topic is still ambiguous between
+"nothing happened" and "the pipeline stopped". `track_ended` and `stream_ended`
+remain implemented but **NOT EXERCISED**
+([detail](docs/milestone-09-mqtt.md) §18).
 
 ---
 
@@ -434,7 +568,6 @@ Deliberately thin — detail is added when a milestone is opened.
 
 | № | Milestone | Expected focus |
 |---|---|---|
-| 9 | Monitoring and Logging | Metrics, event output, observability |
 | 10 | Final Report | Consolidated deliverables |
 
 ---

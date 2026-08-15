@@ -36,12 +36,31 @@ SHADOW_DIR="${SHADOW_DIR:-$REPO_ROOT/models/tracks_shadow}"
 # docs/milestone-05-restricted-zone.md
 ZONE_DIR="${ZONE_DIR:-$REPO_ROOT/models/zone}"
 
+# Milestone 9.2. Structured surveillance events as JSON Lines, written by the
+# same probe from the same nvdsanalytics metadata -- transitions only, not
+# per-frame state. Truncated per run, so it is bounded by the run rather than by
+# a rotation policy. See docs/milestone-09-events.md
+EVENTS_DIR="${EVENTS_DIR:-$REPO_ROOT/models/events}"
+EVENTS_FILE="${EVENTS_FILE:-$EVENTS_DIR/events.jsonl}"
+
+# Milestone 9.3. One stable application topic: the payload already carries
+# event, zone, track_id and class, so a topic per track or per frame would push
+# routing information into the topic tree that the message already contains.
+MQTT_HOST="${MQTT_HOST:-127.0.0.1}"
+MQTT_PORT="${MQTT_PORT:-1883}"
+MQTT_TOPIC="${MQTT_TOPIC:-surveillance/zone}"
+
 # Milestone 7. The Triton model repository: its config.pbtxt is committed
 # application configuration, while 1/model.plan is the Milestone 4 engine,
 # bind-mounted read-only at run time and never copied or committed.
 TRITON_REPO_DIR="${TRITON_REPO_DIR:-$REPO_ROOT/models/triton_model_repo}"
 TRITON_MODEL_NAME="${TRITON_MODEL_NAME:-trafficcamnet}"
 PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/analytics_probe}"
+# Milestone 9.3. The same source built with -DHAVE_MOSQUITTO. A SEPARATE binary
+# because libmosquitto's headers exist only inside the Milestone 7 container, and
+# because the Milestone 5/7/9.2 paths must keep using a probe that has never
+# linked it. Built by run_container.sh --events-mqtt, which has docker.
+PROBE_MQTT_BIN="${PROBE_MQTT_BIN:-$REPO_ROOT/build/analytics_probe_mqtt}"
 
 # The committed nvinfer config references a version-free engine name, so that no
 # TensorRT version or GPU name is hard-coded in a checked-in file. The wrapper
