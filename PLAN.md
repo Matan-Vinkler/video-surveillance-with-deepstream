@@ -79,6 +79,7 @@ Edge characterisation: [`docs/milestone-08-edge-deployment.md`](docs/milestone-0
 Redeployment: [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md).
 Surveillance events: [`docs/milestone-09-events.md`](docs/milestone-09-events.md).
 MQTT delivery: [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md).
+**The whole system in one document:** [`docs/final-report.md`](docs/final-report.md).
 
 ---
 
@@ -96,7 +97,9 @@ learning progress (§7) is tracked separately.
 - [x] **7. Deploy Inference with Triton Inference Server**
 - [x] **8. Deploy on Edge Device (Jetson)**
 - [x] **9. Monitoring and Logging**
-- [ ] **10. Final Report and Deliverables** ← next
+- [x] **10. Final Report and Deliverables**
+
+**All ten milestones are complete.**
 
 | № | Milestone | Status | Documentation |
 |---|---|---|---|
@@ -109,17 +112,117 @@ learning progress (§7) is tracked separately.
 | 7 | Deploy Inference with Triton | **Complete** | [`docs/milestone-07-triton.md`](docs/milestone-07-triton.md) |
 | 8 | Deploy on Edge Device (Jetson) | **Complete** — all 3 checkpoints | [`docs/milestone-08-inspection.md`](docs/milestone-08-inspection.md), [`docs/milestone-08-edge-deployment.md`](docs/milestone-08-edge-deployment.md), [`docs/milestone-08-redeployment.md`](docs/milestone-08-redeployment.md) |
 | 9 | Monitoring and Logging | **Complete** — all 3 checkpoints | [`docs/milestone-09-inspection.md`](docs/milestone-09-inspection.md), [`docs/milestone-09-events.md`](docs/milestone-09-events.md), [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md) |
-| 10 | Final Report and Deliverables | Not started — **next** | — |
+| 10 | Final Report and Deliverables | **Complete** — all 3 checkpoints | [`docs/final-report.md`](docs/final-report.md), [`demo/README.md`](demo/README.md) |
 
 ---
 
 ## 4. Current milestone
 
-**Milestone 10 — Final Report and Deliverables — is next. It has not been
-opened.**
+**None. The capstone is complete.** Milestone 10 closed on 2026-08-15 with the
+final report, the demo capture and a passing final audit. What remains is
+recorded in §9 (future improvements), §10 (open questions) and §11 (technical
+debt) — none of it is required by the capstone.
 
-Expected focus is consolidating the deliverables. Detail is added when the
-milestone is opened, per §6.
+---
+
+### Milestone 10 — Final Report and Deliverables (complete)
+
+The capstone asks for three deliverables: a 2–3 page report with architecture and
+configuration, a deployment pipeline, and a demo video showing detection working.
+The **deployment pipeline already existed** — one image, one script, six modes,
+all committed and exercised since Milestones 6 and 7. The inspection found only
+two genuinely missing artifacts: the report and the video.
+
+Milestone 10 is therefore a **collect, summarise, package, present and audit**
+milestone. No feature is added, no benchmark is re-run, and no milestone result is
+recomputed.
+
+| # | Checkpoint | Status |
+|---|---|---|
+| 10.1 | Final deliverables inspection and gap analysis | **Complete** — read-only; mapped every artifact to a capstone deliverable, found the report and video missing, and found six stale current-facing statements |
+| 10.2 | Final report and repository packaging | **Complete** — [`docs/final-report.md`](docs/final-report.md) |
+| 10.3 | Demo video and final capstone audit | **Complete** — `demo/demo.mp4`, recorded 2026-08-15; [`demo/README.md`](demo/README.md) |
+
+#### 10.2 — complete
+
+- **[`docs/final-report.md`](docs/final-report.md)** — a synthesis, not a
+  compression of `docs/`. Seven sections, a Mermaid diagram of the **deployed**
+  architecture with the monitoring branch drawn as a metadata tap, one
+  configuration table, the six headline metrics, and nine explicit limitations.
+  Every significant claim links to the milestone document that established it.
+- **A real documentation error was corrected.** `run_container.sh` and
+  [`docs/milestone-09-mqtt.md`](docs/milestone-09-mqtt.md) both claimed every
+  non-MQTT mode used `--network none`. **`--display` has never passed a
+  `--network` flag**, so it runs on Docker's default bridge. Only the
+  documentation was corrected — the display path was not changed to make an old
+  sentence true, and no M7 or M9 result depends on it, because
+  `verify_triton.sh` asserts isolation on its own `docker run` invocations.
+- **README now describes the finished system**: the deployed Triton architecture
+  replaces the stale `nvinfer` diagram, a "Run the finished system" section
+  answers the one question a reader actually has, the M8 throughput and the M9
+  event output appear in Results, requirements distinguish always-needed from
+  container-only from MQTT-only, and the multi-gigabyte image builds are marked
+  as historical rather than as a quick-start step.
+- **Historical statements were pointed at, never rewritten** — see §10.
+
+#### 10.3 — complete
+
+**The demo: `demo/demo.mp4`**, 19.98 s, 1280×720, 15 fps, 6.2 MB —
+**git-ignored and delivered alongside the repository**, per the standing rule
+that media is never committed (§8). The two uncaptioned segments,
+`demo-visual.mp4` (12.99 s) and `demo-mqtt.mp4` (6.99 s), are kept beside it and
+are equally ignored. Full capture record, with every command that actually ran:
+[`demo/README.md`](demo/README.md).
+
+- **The capture method was proven before DeepStream was started.** No screen
+  recorder is installed and `nvv4l2h264enc` is absent, so the recorder is a
+  GStreamer pipeline — `ximagesrc` → `videoscale` → `x264enc
+  speed-preset=ultrafast` → `mp4mux` — encoding on the CPU at 1280×720/15 fps to
+  keep it off the pipeline's back. A 60-buffer test capture of the bare desktop
+  was recorded and read back with `gst-discoverer-1.0` first.
+- **Segment 1 is the paced path, not the soak.** `run_container.sh --display
+  --triton` on display `:1`, `sync=1`, `file-loop=0`, playing at the source's
+  29.97 fps. `**PERF: 29.80 (32.93)`, clean EOS, `App run successful`, exit 0.
+  The clip shows the bounding box, a stable `person 1` label, the ROI outline and
+  **`RF` stepping 0 → 1 → 0**, all confirmed frame by frame after recording.
+- **Segment 2 is a separate run and is captioned as one.** A `mosquitto_sub`
+  opened on the recorded display **before** the pipeline, then `--events-mqtt
+  --triton` from a shell that is deliberately not on that display. Two messages
+  arrived — `zone_enter` 109 and `zone_exit` 183 with `frames_inside: 75` —
+  against `events written: 2 / published: 2 / acked: 2 / failures: 0`. **No
+  combined display-plus-MQTT mode was invented**: `deepstream-app` renders but
+  cannot report analytics, and `analytics_probe` ends in `fakesink`.
+- **Assembly added captions and nothing else.** One `concat` + `textoverlay`
+  pass; the result is 19.981 s and 300 frames, exactly the sum of its parts.
+- **The video is evidence of functionality, never of performance.** It is a
+  CPU-encoded screen capture at 15 fps of a 29.97 fps render; M8.2 remains the
+  throughput evidence.
+
+**Final audit — six runnable suites, all exit 0**, run one at a time after the
+recording: `verify_inference.sh`, `verify_tracking.sh`, `verify_zone.sh`,
+`verify_triton.sh` (33 PASS / 0 FAIL), `verify_events.sh`, `verify_mqtt.sh`.
+Every established invariant held: 288 frames; 0 mid-track ID switches, 2 unique
+ids, a 224-frame run over 50..273; zone entry 109, 75 frames inside, exit 183,
+one interval, 100.00% agreement; 2 events; 2 MQTT messages received byte-for-byte
+identical to the JSONL. **No new benchmark was run and no criterion was
+loosened.**
+
+**`verify_container.sh` was NOT re-run.** It requires
+`video-surveillance-deepstream:m6`, which was deleted during Milestone 7 to make
+room for the Triton stack (`docker image inspect` confirms it is absent).
+Recreating a ~9 GB image to re-assert a historical claim was rejected as
+disproportionate and would violate the M8 never-build rule. Its documented
+passing result stands as a dated record; this is a reproducibility limitation
+(§11), not an audit failure.
+
+**One completed-milestone file was amended, and it is called out rather than
+buried.** `verify_events.sh` exited **1** on the first audit run, with all twenty
+checks green except a hygiene assertion that no video file exists outside
+`media/` — it had found the three demo captures. The check predates `demo/`
+existing. `demo/` is now excluded alongside `media/`; the property under test is
+unchanged, still enforced over `models/`, and a control test confirmed a file
+planted under `models/zone/` is still caught. Recorded in
+[`docs/milestone-09-events.md`](docs/milestone-09-events.md) §14.
 
 ---
 
@@ -224,8 +327,13 @@ and they were **byte-identical to the JSONL lines** from the same run.
   though it had just happened.
 - **`--network host`, scoped to this one mode.** The broker listens on loopback
   only; M9.1 measured that `--network none` and the default bridge both fail to
-  reach it. Every other mode keeps `--network none`, and `verify_triton.sh` — which
-  asserts that isolation in four places — still passes untouched.
+  reach it. Every mode that had `--network none` keeps it — `--headless`,
+  `--zone`, `--events`, `--shell` — and `verify_triton.sh`, which asserts that
+  isolation on its own `docker run` invocations, still passes untouched.
+  *(Corrected 2026-08-15, M10.2: this bullet previously read "every other mode".
+  `--display` has never passed a `--network` flag and so runs on Docker's default
+  bridge. Documentation only — no runtime behaviour was changed, and no M7 or M9
+  result depends on it.)*
 - **Failure is loud.** Pointed at a closed port, the run printed
   `mqtt: cannot connect to 127.0.0.1:18831 -- Connection refused`, exited **1**
   in **8 s** with no retry loop, and **still wrote the local JSONL record**. The
@@ -478,11 +586,16 @@ Carried forward:
 - **End-to-end pipeline throughput is unmeasured.** M4 benchmarked the engine in
   isolation. The assembled pipeline now contains a tracker and analytics as well,
   so a throughput figure is no longer only an inference cost.
+  *Superseded by M8.2 — 178.14 fps steady-window mean, ~5.94× the source rate.
+  Retained here as the state at M5 completion; see §10.*
 - **The probe diverges from deepstream-app on 10 early frames**
   ([detail](docs/milestone-05-restricted-zone.md) §6) — bounded and far from the
   ROI, mechanism unproven.
 
 Out of scope until explicitly opened: Triton, Docker, MQTT, monitoring.
+
+*Superseded: all four were opened and delivered — Docker in M6, Triton in M7,
+MQTT and monitoring in M9. Retained here as the state at M5 completion.*
 
 ---
 
@@ -566,9 +679,9 @@ Inspection-phase record: [`docs/milestone-04-inspection.md`](docs/milestone-04-i
 
 Deliberately thin — detail is added when a milestone is opened.
 
-| № | Milestone | Expected focus |
-|---|---|---|
-| 10 | Final Report | Consolidated deliverables |
+**None remain.** Milestone 10 was the last and it is complete; its record lives in
+§4. This section is kept so the structure of the plan stays intact. Work that was
+considered and deliberately left out of scope is in §9, §10 and §11.
 
 ---
 
@@ -836,6 +949,12 @@ related but not identical.
 | M8.3 verdict rests on **self-contained** invariants; historical dumps only corroborate | The fresh runs compute all fourteen tracking and zone invariants about themselves, so acceptance needs no reference. The pre-soak dumps are dated but carry no manifest, unlike the hash-sealed M6 baseline, so they inform rather than decide ([detail](docs/milestone-08-redeployment.md) §11) | 8 | Active |
 | No new verification script for M8.3 | Two existing `run_container.sh` modes plus the two existing analysers already express every established invariant. `verify_triton.sh` was deliberately **not** re-run: it is M7's statement of record, needs the external M6 baseline, and asserts a strict detector-count criterion that documented jitter could break ([detail](docs/milestone-08-redeployment.md) §2) | 8 | Active |
 | Loop-boundary samples measured, then deliberately **not** excluded | Exclusion was designed in as a mitigation; measurement put the boundary cost at ~0.30 fps of 178 (0.17%), so discarding 334 of 540 samples would have been worse methodology than keeping them ([detail](docs/milestone-08-edge-deployment.md) §8) | 8 | Active |
+| The final report is **Markdown only**, no PDF | Every document here is Markdown and GitHub renders it; `pandoc`, `weasyprint` and every LaTeX engine are absent on this machine, and installing one needs `sudo`. A PDF is optional polish, not a capstone requirement | 10 | Active |
+| The demo video is **not committed**; `demo/README.md` is | Same standing rule as `media/`: large binaries are not committed. The video is a submission artifact delivered alongside the repository, and the README keeps the capture reproducible | 10 | Active |
+| Documentation corrected, **display networking left alone** | `--display` was documented as `--network none` and never was. The honest fix is to correct the sentence, not to change a completed milestone's runtime behaviour so an old claim becomes true | 10 | Active |
+| The demo is **two captioned runs**, not one combined mode | `deepstream-app` renders but cannot report analytics; `analytics_probe` reports but has no display. Building a combined mode purely for a presentation would be feature work on a finished, verified system | 10 | Active |
+| The screen recorder is a **GStreamer pipeline**, not an installed tool | No recorder is installed and installing one needs `sudo`. `ximagesrc` → `x264enc` → `mp4mux` was already available and was proven on the bare desktop before DeepStream was involved. `nvv4l2h264enc` is absent, so 1280×720/15 fps and `speed-preset=ultrafast` keep CPU encoding off the pipeline's back ([detail](demo/README.md)) | 10 | Active |
+| `verify_events.sh`'s video-hygiene check excludes `demo/` as well as `media/` | The check asserts the **event pipeline** writes no video; it was written when `media/` was the only legitimate video location and began failing on the demo deliverable itself. Scope over `models/` — where the pipeline actually writes — is unchanged and was re-tested with a planted file ([detail](docs/milestone-09-events.md) §14) | 10 | Active |
 
 ---
 
@@ -942,3 +1061,4 @@ Off the critical path; recorded so they do not become scope.
 | The M7 Triton image is **16.03 GB**, and with its base occupies ~71 GB of a 116 GB filesystem | **High, and now bounded** — a rebuild measured free space falling to 14.48 GB, and the M6 image had to be deleted to make room. 29 GB remained free at the M8.1 inspection, 25 GB on 2026-08-13 ([detail](docs/milestone-08-inspection.md) §2) | Trigger fired: M8 opened and decided to **reuse the image unchanged** — never build, pull or prune, and bind-mount anything new. Revisit only if a rebuild becomes unavoidable, at which point the ~1.8× size of the Triton path over direct inference is the thing to weigh |
 | `verify_triton.sh` depends on `/home/matan/m6-baseline`, outside the repository | Medium — the M7 comparison is not reproducible on a clean machine, only re-runnable here | If the project must be verifiable from a fresh clone, or the baseline is lost |
 | No live M6 regression run accompanies the M7 result | Medium — M7 is compared against a frozen capture, not a live M6 rerun ([detail](docs/milestone-07-triton.md) §6) | If disk allows both images again, or M6 needs re-certifying |
+| `verify_container.sh` is not runnable — its `m6` image no longer exists | Medium — one of the eight suites cannot be executed, so the M6 claim rests on a dated passing record rather than a live run. Confirmed absent at the M10.3 audit; deliberately **not** rebuilt, because a ~9 GB build to re-assert a historical claim would break the M8 never-build rule | If disk allows the M6 image again, or that claim must be re-certified |

@@ -10,7 +10,8 @@
 #
 # TWO BINARIES, DELIBERATELY. The `mqtt` target links libmosquitto, whose HEADERS
 # are present in the Milestone 7 container but NOT on this host -- so `make mqtt`
-# has to run inside that container (scripts/ds_common.sh does it). Keeping the
+# has to run inside that container. scripts/run_container.sh --events-mqtt does
+# exactly that, in a throwaway --rm container, before it runs. Keeping the
 # default target free of libmosquitto means the Milestone 5/7/9.2 paths use a
 # binary that has never linked it, so whichever build ran last cannot change an
 # earlier milestone's result.

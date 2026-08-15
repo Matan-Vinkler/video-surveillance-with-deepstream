@@ -60,5 +60,14 @@ models/edge/
 # scripts/ds_common.sh.
 build/
 
+# Milestone 10 demo capture. The video is a SUBMISSION artifact, not source --
+# same rule as media/: large binaries are not committed. Only the media files are
+# ignored, never the directory, because demo/README.md documents how the capture
+# is produced and must stay tracked.
+demo/*.mp4
+demo/*.mkv
+demo/*.mov
+demo/*.webm
+
 # Python bytecode cache from the analysis scripts
 __pycache__/

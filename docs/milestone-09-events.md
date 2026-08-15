@@ -22,6 +22,11 @@ files, and cross-checked against an independent recomputation.
 
 **MQTT is not implemented.** Delivery to an external broker is Milestone 9.3.
 
+> *Pointer added 2026-08-15 (M10.2): Milestone 9.3 has since delivered it —
+> [`milestone-09-mqtt.md`](milestone-09-mqtt.md). The statement above is
+> retained as the state at the close of 9.2, and remains true of this document's
+> scope: nothing verified here needs a broker or a network.*
+
 ---
 
 ## 1. Why not configuration alone
@@ -366,6 +371,22 @@ so that a future change silently taking a different path would be caught.
 | `--network none` retained | **PASS** |
 
 > **M9.2: PASS.** Milestone 9 remains open.
+
+> **Amendment — 2026-08-15, Milestone 10.3.** One line of
+> `scripts/verify_events.sh` was changed, and it is recorded here because this
+> document is the script's statement of record. Its *"no output video produced"*
+> hygiene check searched the whole repository except `media/`, which at the time
+> was the only legitimate home for a video file. Milestone 10.2 added `demo/` for
+> the capstone demo capture, so the check began failing on the deliverable it was
+> never meant to police — `verify_events.sh` exited **1** with all twenty checks
+> otherwise green. `demo/` is now excluded alongside `media/`.
+>
+> **No criterion was loosened.** The property under test — that the *event
+> pipeline* writes no video — is unchanged and still enforced over `models/`,
+> which is where `deepstream-app` and `analytics_probe` write; a control test
+> confirmed a file planted under `models/zone/` is still caught. The M9.2 result
+> above stands: re-run after the amendment, `verify_events.sh` exits **0** with
+> zone_enter 109, zone_exit 183, 75 frames inside, 2 events for 288 frames.
 
 ## 15. What remains for M9.3
 

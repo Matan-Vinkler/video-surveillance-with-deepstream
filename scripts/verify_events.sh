@@ -343,7 +343,17 @@ fi
 # harmless and is not: grep -v exits 1 when it emits no lines, and under
 # `set -o pipefail` that aborts the script just as it is about to report a pass.
 # Found by this script failing at exactly that line with every check green.
-VIDEOS="$(find "$REPO_ROOT" -not -path "$REPO_ROOT/media/*" \
+#
+# AMENDED 2026-08-15 (Milestone 10.3). demo/ is excluded alongside media/. When
+# this check was written media/ was the repository's only legitimate home for a
+# video file; M10.2 added demo/ for the capstone demo capture, which is a
+# screen recording and a git-ignored submission artifact -- not something any
+# pipeline in this project writes. The property under test is unchanged and
+# still enforced: the EVENT PIPELINE must produce no video. It cannot hide one,
+# because deepstream-app and analytics_probe write only under models/, which is
+# still fully in scope here. Without this exclusion the check fails on the
+# deliverable it was never meant to police.
+VIDEOS="$(find "$REPO_ROOT" -not -path "$REPO_ROOT/media/*" -not -path "$REPO_ROOT/demo/*" \
     \( -name '*.mp4' -o -name '*.mkv' -o -name '*.h264' \) 2>/dev/null | wc -l)"
 (( VIDEOS == 0 )) && note_pass "no output video produced" \
     || note_fail "$VIDEOS video file(s) appeared"

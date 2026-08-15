@@ -158,6 +158,18 @@ So M9.3 adds a **new mode** rather than relaxing the old ones:
 | `--events` | `--network none` | M9.2 — file output needs no network |
 | **`--events-mqtt`** | **`--network host`** | M9.3 — publishing requires the broker |
 
+> **Correction — 2026-08-15, Milestone 10.2.** The first row above is wrong about
+> `--display`. That mode has never passed a `--network` flag, so it runs on
+> Docker's **default bridge**, not `--network none`. The row is left as written
+> because this document is a dated record; the accurate three-way split is
+> `--headless`/`--zone`/`--events`/`--shell` explicitly `--network none`,
+> `--display` on the default bridge, `--events-mqtt` on `--network host`. The
+> error was in this table and in `run_container.sh`'s header comment, never in
+> what the script did: `--display` was not changed, and nothing about the M9.3
+> result depends on it. The Milestone 7 isolation evidence is unaffected, because
+> `verify_triton.sh` asserts `--network none` on **its own** `docker run`
+> invocations rather than on this script's display path.
+
 Three properties follow, and all three are verified rather than asserted:
 
 1. `verify_triton.sh` still passes unchanged, so the isolation claim still holds
@@ -417,6 +429,10 @@ build/analytics_probe:  still does NOT link libmosquitto
 | Existing verifications unchanged | **PASS** — three suites, all exit 0 |
 | `--network none` retained for every other mode | **PASS** |
 | No image built, bounded disk, no orphans | **PASS** |
+
+The `--network none` row should read *"retained for every mode that had it"* —
+`--display` never had it. See the correction under §7; the verdict is unchanged,
+because M9.3 added a mode rather than altering any existing one.
 
 > **M9.3: PASS.**
 

@@ -27,11 +27,16 @@
 # through its CSV mode, which was verified before writing this
 # (docs/milestone-06-containerization.md).
 #
-# NETWORKING. Every mode uses --network none EXCEPT --events-mqtt, which uses
-# --network host because the Mosquitto broker listens on loopback only. That one
-# exception is Milestone 9.3 and is scoped to that mode alone: the Milestone 7
-# claim that Triton runs in-process with no socket rests on --network none and
-# is asserted by verify_triton.sh, which is untouched.
+# NETWORKING -- three cases, not two:
+#   --headless, --zone, --events, --shell   explicit --network none
+#   --display                               Docker's DEFAULT BRIDGE. It needs no
+#                                           network, but no --network flag is
+#                                           passed either, so it is not isolated
+#   --events-mqtt                           --network host, REQUIRED: the
+#                                           Mosquitto broker listens on loopback
+# The Milestone 7 claim that Triton runs in-process over no socket rests on
+# --network none and is asserted by verify_triton.sh's own runs, which are
+# untouched by the MQTT mode.
 #
 # Usage:
 #   ./scripts/run_container.sh --build
@@ -57,7 +62,7 @@ while (( $# > 0 )); do
             [[ -z "$MODE" ]] || die "Pick one mode, not '$MODE' and '$1'."
             MODE="$1" ;;
         --triton) TRITON=1 ;;
-        -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
         *) die "Unknown option '$1'. Try --help." ;;
     esac
     shift
@@ -234,11 +239,13 @@ case "$MODE" in
         #
         #   2. a probe built with -DHAVE_MOSQUITTO.
         #
-        # THIS IS A NEW MODE, NOT A RELAXATION. --headless, --zone, --events,
-        # --display and --shell all keep --network none. Milestone 7's evidence
-        # that Triton runs in-process with no socket rests on that isolation and
-        # is untouched: the network is opened only where publishing genuinely
-        # requires it, and it is visible in the mode name at the CLI.
+        # THIS IS A NEW MODE, NOT A RELAXATION. --headless, --zone, --events and
+        # --shell all keep --network none, and --display keeps whatever it had
+        # (Docker's default bridge -- it has never passed a --network flag).
+        # Milestone 7's evidence that Triton runs in-process with no socket rests
+        # on --network none and is untouched: the network is opened only where
+        # publishing genuinely requires it, and it is visible in the mode name at
+        # the CLI.
         mkdir -p "$EVENTS_DIR"
 
         # libmosquitto's headers ship in this image but not on the Jetson host,

@@ -467,6 +467,10 @@ All five also appear in the Milestone 6 path.
 - **Throughput is still unmeasured end to end.** The visible run's `**PERF`
   figures are paced by `sync=1` and are not a throughput measurement. This
   remains open from Milestone 5.
+  *(Pointer added 2026-08-15, M10.2: answered by Milestone 8.2 — the assembled
+  Triton pipeline sustains a 178.14 fps steady-window mean, ~5.94× the 29.97 fps
+  source rate, unpaced. Retained here as the state at the close of M7 —
+  [`milestone-08-edge-deployment.md`](milestone-08-edge-deployment.md).)*
 - **`verify_triton.sh` cannot be run from a clean machine** without the frozen
   baseline directory, which lives outside the repository and is not committed.
 
